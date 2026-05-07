@@ -9,8 +9,8 @@ use crate::{
     windows_integration::{self, RegistrationState},
 };
 use iced::{
-    Element, Event, Length, Point, Size, Subscription, Task, clipboard, event, keyboard, mouse,
-    time,
+    Element, Event, Length, Point, Size, Subscription, Task, alignment, clipboard, event, keyboard,
+    mouse, time,
     widget::{
         Column, Row, Space, button, checkbox, container, responsive, rule, scrollable, stack, text,
         text_editor, text_input,
@@ -655,8 +655,7 @@ impl LinkInterceptorApp {
     }
 
     fn view_main(&self, window_id: window::Id) -> Element<'_, Message> {
-        let tabs = Row::new()
-            .spacing(8)
+        let tabs = centered_row(8)
             .push(tab_button(self.active_tab, Tab::History, "历史记录"))
             .push(tab_button(self.active_tab, Tab::Favorites, "收藏"))
             .push(tab_button(self.active_tab, Tab::Registration, "注册状态"))
@@ -726,8 +725,7 @@ impl LinkInterceptorApp {
     }
 
     fn view_history(&self, window_id: window::Id) -> Element<'_, Message> {
-        let tools = Row::new()
-            .spacing(8)
+        let tools = centered_row(8)
             .push(text("搜索"))
             .push(
                 text_input("输入 URL 关键词", &self.history_query)
@@ -743,8 +741,7 @@ impl LinkInterceptorApp {
             .iter()
             .filter(|entry| query.is_empty() || entry.url.to_ascii_lowercase().contains(&query))
         {
-            let actions = Row::new()
-                .spacing(8)
+            let actions = centered_row(8)
                 .push(button("删除").on_press(Message::DeleteHistory(entry.url.clone())))
                 .push(button("打开").on_press(Message::OpenHistory(entry.url.clone())));
             let details = Column::new()
@@ -756,7 +753,7 @@ impl LinkInterceptorApp {
                     entry.open_count
                 )));
             rows = rows
-                .push(Row::new().spacing(12).push(actions).push(details))
+                .push(centered_row(12).push(actions).push(details))
                 .push(rule::horizontal(1));
         }
 
@@ -770,7 +767,7 @@ impl LinkInterceptorApp {
     }
 
     fn view_favorites(&self) -> Element<'_, Message> {
-        let tools = Row::new().spacing(8).push(text("搜索")).push(
+        let tools = centered_row(8).push(text("搜索")).push(
             text_input("输入 URL 关键词", &self.favorites_query)
                 .on_input(Message::FavoritesQueryChanged)
                 .width(Length::Fill),
@@ -783,8 +780,7 @@ impl LinkInterceptorApp {
             .iter()
             .filter(|entry| query.is_empty() || entry.url.to_ascii_lowercase().contains(&query))
         {
-            let actions = Row::new()
-                .spacing(8)
+            let actions = centered_row(8)
                 .push(button("移除").on_press(Message::RemoveFavorite(entry.url.clone())))
                 .push(button("打开").on_press(Message::OpenFavorite(entry.url.clone())));
             let details = Column::new()
@@ -795,7 +791,7 @@ impl LinkInterceptorApp {
                     entry.added_at.format("%Y-%m-%d %H:%M:%S")
                 )));
             rows = rows
-                .push(Row::new().spacing(12).push(actions).push(details))
+                .push(centered_row(12).push(actions).push(details))
                 .push(rule::horizontal(1));
         }
 
@@ -824,8 +820,7 @@ impl LinkInterceptorApp {
             .push(text(state))
             .push(text(exe))
             .push(
-                Row::new()
-                    .spacing(8)
+                centered_row(8)
                     .push(button("注册当前 exe").on_press(Message::RegisterApplication))
                     .push(button("反注册").on_press(Message::UnregisterApplication))
                     .push(button("打开默认应用设置").on_press(Message::OpenDefaultAppsSettings)),
@@ -849,8 +844,7 @@ impl LinkInterceptorApp {
             let app_editor = Column::new()
                 .spacing(8)
                 .push(
-                    Row::new()
-                        .spacing(8)
+                    centered_row(8)
                         .push(text("名称").width(Length::Fixed(80.0)))
                         .push(
                             text_input("名称", &app.name)
@@ -860,8 +854,7 @@ impl LinkInterceptorApp {
                         .push(button("移除").on_press(Message::RemoveCustomApp(index))),
                 )
                 .push(
-                    Row::new()
-                        .spacing(8)
+                    centered_row(8)
                         .push(text("可执行文件").width(Length::Fixed(80.0)))
                         .push(
                             text_input("可执行文件", &app.executable)
@@ -872,8 +865,7 @@ impl LinkInterceptorApp {
                         ),
                 )
                 .push(
-                    Row::new()
-                        .spacing(8)
+                    centered_row(8)
                         .push(text("参数").width(Length::Fixed(80.0)))
                         .push(
                             text_input("参数", &app.args_template)
@@ -892,8 +884,7 @@ impl LinkInterceptorApp {
         content = content
             .push(text("添加自定义应用").size(18))
             .push(
-                Row::new()
-                    .spacing(8)
+                centered_row(8)
                     .push(text("名称").width(Length::Fixed(80.0)))
                     .push(
                         text_input("名称", &self.new_custom_app.name)
@@ -902,8 +893,7 @@ impl LinkInterceptorApp {
                     ),
             )
             .push(
-                Row::new()
-                    .spacing(8)
+                centered_row(8)
                     .push(text("可执行文件").width(Length::Fixed(80.0)))
                     .push(
                         text_input("可执行文件", &self.new_custom_app.executable)
@@ -912,8 +902,7 @@ impl LinkInterceptorApp {
                     ),
             )
             .push(
-                Row::new()
-                    .spacing(8)
+                centered_row(8)
                     .push(text("参数").width(Length::Fixed(80.0)))
                     .push(
                         text_input("参数", &self.new_custom_app.args_template)
@@ -927,8 +916,7 @@ impl LinkInterceptorApp {
 
         for (index, rule) in self.config.domain_rules.iter().enumerate() {
             content = content.push(
-                Row::new()
-                    .spacing(8)
+                centered_row(8)
                     .push(text("匹配模式").width(Length::Fixed(80.0)))
                     .push(
                         text_input("匹配模式", &rule.pattern)
@@ -948,8 +936,7 @@ impl LinkInterceptorApp {
         content = content
             .push(text("添加域名规则").size(18))
             .push(
-                Row::new()
-                    .spacing(8)
+                centered_row(8)
                     .push(text("匹配模式").width(Length::Fixed(80.0)))
                     .push(
                         text_input("匹配模式", &self.new_domain_rule.pattern)
@@ -958,8 +945,7 @@ impl LinkInterceptorApp {
                     ),
             )
             .push(
-                Row::new()
-                    .spacing(8)
+                centered_row(8)
                     .push(text("应用名称").width(Length::Fixed(80.0)))
                     .push(
                         text_input("应用名称", &self.new_domain_rule.app_name)
@@ -970,8 +956,7 @@ impl LinkInterceptorApp {
             )
             .push(rule::horizontal(1))
             .push(
-                Row::new()
-                    .spacing(8)
+                centered_row(8)
                     .push(button("保存设置").on_press(Message::SaveSettings))
                     .push(button("恢复默认设置").on_press(Message::RequestResetConfig(window_id))),
             );
@@ -997,8 +982,7 @@ impl LinkInterceptorApp {
                     .available
                     .then_some(Message::OpenCandidate(window_id, candidate.clone())),
             );
-            let row = Row::new()
-                .spacing(12)
+            let row = centered_row(12)
                 .push(open_button)
                 .push(text(candidate.name.clone()).width(Length::Fixed(180.0)))
                 .push(text(candidate_kind_label(&candidate.kind)).width(Length::Fixed(120.0)))
@@ -1029,8 +1013,7 @@ impl LinkInterceptorApp {
                     .height(Length::Fixed(130.0)),
                 )
                 .push(
-                    Row::new()
-                        .spacing(8)
+                    centered_row(8)
                         .push(button("复制").on_press(Message::CopyInterceptUrl(window_id)))
                         .push(
                             button(favorite_label)
@@ -1087,6 +1070,12 @@ fn is_w_key(key: &keyboard::Key) -> bool {
     matches!(key.as_ref(), keyboard::Key::Character("w" | "W"))
 }
 
+fn centered_row<'a>(spacing: u32) -> Row<'a, Message> {
+    Row::new()
+        .spacing(spacing)
+        .align_y(alignment::Vertical::Center)
+}
+
 fn tab_button(active_tab: Tab, tab: Tab, label: &'static str) -> Element<'static, Message> {
     let label = if active_tab == tab {
         format!("> {label}")
@@ -1107,8 +1096,7 @@ fn confirmation_overlay(
     let y = (target_pos.y - 60.0).max(0.0);
     let popup = container(
         Column::new().spacing(10).push(text(message)).push(
-            Row::new()
-                .spacing(8)
+            centered_row(8)
                 .push(
                     button("取消")
                         .width(Length::Fixed(96.0))

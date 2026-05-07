@@ -57,6 +57,7 @@ pub struct LinkInterceptorApp {
     favorites: Vec<FavoriteEntry>,
     active_tab: Tab,
     history_query: String,
+    clear_history_confirmation: Option<ClearHistoryConfirmation>,
     favorites_query: String,
     status: String,
     registration_state: RegistrationState,
@@ -73,6 +74,11 @@ struct InterceptWindow {
     id: u64,
     url: String,
     status: String,
+}
+
+struct ClearHistoryConfirmation {
+    target_pos: egui::Pos2,
+    popup_pos: egui::Pos2,
 }
 
 impl LinkInterceptorApp {
@@ -130,6 +136,7 @@ impl LinkInterceptorApp {
             favorites,
             active_tab: Tab::History,
             history_query: String::new(),
+            clear_history_confirmation: None,
             favorites_query: String::new(),
             status: String::new(),
             registration_state: windows_integration::registration_state(),
@@ -390,6 +397,8 @@ impl LinkInterceptorApp {
             Tab::Registration => self.ui_registration(ui),
             Tab::Settings => self.ui_settings(ui),
         });
+
+        self.ui_clear_history_confirmation(ctx);
     }
 
     fn show_intercept_windows(&mut self, ctx: &egui::Context) {
@@ -493,11 +502,14 @@ impl LinkInterceptorApp {
             ui.label("搜索");
             ui.text_edit_singleline(&mut self.history_query);
             if ui.button("清空历史记录").clicked() {
-                self.history.clear();
-                if let Some(store) = &self.store {
-                    let _ = store.save_history(&self.history);
-                }
-                self.status = "历史记录已清空".to_owned();
+                let target_pos = ui
+                    .ctx()
+                    .pointer_latest_pos()
+                    .unwrap_or_else(|| ui.next_widget_position());
+                self.clear_history_confirmation = Some(ClearHistoryConfirmation {
+                    target_pos,
+                    popup_pos: target_pos - egui::vec2(30.0, 41.0),
+                });
             }
         });
         ui.separator();
@@ -532,6 +544,61 @@ impl LinkInterceptorApp {
                 ui.separator();
             }
         });
+    }
+
+    fn ui_clear_history_confirmation(&mut self, ctx: &egui::Context) {
+        let Some(confirmation) = &self.clear_history_confirmation else {
+            return;
+        };
+        let target_pos = confirmation.target_pos;
+        let popup_pos = confirmation.popup_pos;
+
+        let mut cancel_requested = false;
+        let mut clear_requested = false;
+        let mut alignment_delta = None;
+
+        egui::Area::new(egui::Id::new("clear_history_confirmation"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(popup_pos)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.label("此操作会删除全部历史记录，且无法撤销。");
+                    ui.horizontal(|ui| {
+                        let cancel_response = ui.button("取消");
+                        alignment_delta = Some(target_pos - cancel_response.rect.center());
+                        if cancel_response.clicked() {
+                            cancel_requested = true;
+                        }
+                        if ui.button("确认清空").clicked() {
+                            clear_requested = true;
+                        }
+                    });
+                });
+            });
+
+        if let Some(delta) = alignment_delta {
+            let is_aligned = delta.length_sq() <= 1.0;
+            if let Some(confirmation) = &mut self.clear_history_confirmation {
+                if !is_aligned {
+                    confirmation.popup_pos += delta;
+                }
+            }
+            if !is_aligned {
+                ctx.request_repaint();
+                return;
+            }
+        }
+
+        if clear_requested {
+            self.history.clear();
+            if let Some(store) = &self.store {
+                let _ = store.save_history(&self.history);
+            }
+            self.clear_history_confirmation = None;
+            self.status = "历史记录已清空".to_owned();
+        } else if cancel_requested {
+            self.clear_history_confirmation = None;
+        }
     }
 
     fn ui_favorites(&mut self, ui: &mut egui::Ui) {

@@ -282,15 +282,20 @@ impl LinkInterceptorApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title(
                     AppMode::MainWindow.window_title().to_owned(),
                 ));
+                let close_requested = viewport_close_requested(ctx);
                 self.ui_main(ctx);
-                self.root_window = RootWindow::Main;
+                if close_requested {
+                    self.close_root_main(ctx);
+                } else {
+                    self.root_window = RootWindow::Main;
+                }
             }
             RootWindow::Intercept(mut window) => {
                 ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
                     "拦截 URL #{}",
                     window.id
                 )));
-                let close_requested = ctx.input(|input| input.viewport().close_requested());
+                let close_requested = viewport_close_requested(ctx);
                 egui::TopBottomPanel::bottom("root_intercept_status").show(ctx, |ui| {
                     ui.horizontal(|ui| {
                         ui.label(if window.status.is_empty() {
@@ -311,6 +316,16 @@ impl LinkInterceptorApp {
                 }
             }
         }
+    }
+
+    fn close_root_main(&mut self, ctx: &egui::Context) {
+        if let Some(window) = self.intercept_windows.pop() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.root_window = RootWindow::Intercept(window);
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        self.root_window = RootWindow::Main;
     }
 
     fn replace_closed_root(&mut self, ctx: &egui::Context) {
@@ -340,7 +355,7 @@ impl LinkInterceptorApp {
             .with_min_inner_size(AppMode::MainWindow.min_size())
             .with_active(true);
         let close_requested = ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
-            let close_requested = ctx.input(|input| input.viewport().close_requested());
+            let close_requested = viewport_close_requested(ctx);
             self.ui_main(ctx);
             close_requested
         });
@@ -388,7 +403,7 @@ impl LinkInterceptorApp {
                 .with_active(true);
             let close_requested =
                 ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
-                    let close_requested = ctx.input(|input| input.viewport().close_requested());
+                    let close_requested = viewport_close_requested(ctx);
                     egui::TopBottomPanel::bottom(format!("intercept_status_{}", window.id)).show(
                         ctx,
                         |ui| {
@@ -699,4 +714,11 @@ fn tab_button(ui: &mut egui::Ui, active_tab: &mut Tab, tab: Tab, label: &str) {
     if ui.selectable_label(*active_tab == tab, label).clicked() {
         *active_tab = tab;
     }
+}
+
+fn viewport_close_requested(ctx: &egui::Context) -> bool {
+    ctx.input(|input| {
+        input.viewport().close_requested()
+            || (input.modifiers.ctrl && input.key_pressed(egui::Key::W))
+    })
 }

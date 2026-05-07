@@ -328,7 +328,12 @@ impl LinkInterceptorApp {
                 Tab::Registration => content_app.registration_view().into_any(),
                 Tab::Settings => content_app.settings_view().into_any(),
             })
-            .style(|s| s.flex_grow(1.0)),
+            .style(|s| {
+                s.flex_grow(1.0)
+                    .flex_shrink(1.0)
+                    .width_full()
+                    .min_height(0.0)
+            }),
             label(move || {
                 let status = app.status.get();
                 if status.is_empty() {
@@ -570,9 +575,14 @@ impl LinkInterceptorApp {
                 )
                 .style(|s| s.flex_col().gap(4).width_full().min_width(0.0)),
             )
-            .style(|s| s.flex_grow(1.0).width_full()),
+            .style(|s| {
+                s.flex_grow(1.0)
+                    .flex_shrink(1.0)
+                    .width_full()
+                    .min_height(0.0)
+            }),
         ))
-        .style(|s| s.size_full().padding(14).gap(10).flex_col())
+        .style(|s| s.size_full().padding(14).gap(10).flex_col().min_height(0.0))
     }
 
     fn favorites_view(&self) -> impl IntoView + 'static {
@@ -660,9 +670,14 @@ impl LinkInterceptorApp {
                 )
                 .style(|s| s.flex_col().gap(4).width_full().min_width(0.0)),
             )
-            .style(|s| s.flex_grow(1.0).width_full()),
+            .style(|s| {
+                s.flex_grow(1.0)
+                    .flex_shrink(1.0)
+                    .width_full()
+                    .min_height(0.0)
+            }),
         ))
-        .style(|s| s.size_full().padding(14).gap(10).flex_col())
+        .style(|s| s.size_full().padding(14).gap(10).flex_col().min_height(0.0))
     }
 
     fn registration_view(&self) -> impl IntoView + 'static {

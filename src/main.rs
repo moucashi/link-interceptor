@@ -8,11 +8,12 @@ mod models;
 mod storage;
 mod windows_integration;
 
-use app::{AppMode, LinkInterceptorApp};
+use app::LinkInterceptorApp;
 use ipc::IpcCommand;
 use models::LaunchRequest;
+use std::sync::{Arc, Mutex};
 
-fn main() -> eframe::Result<()> {
+fn main() -> iced::Result {
     let initial_url = std::env::args().nth(1);
     let ipc_command = initial_url
         .as_ref()
@@ -28,29 +29,22 @@ fn main() -> eframe::Result<()> {
     }
 
     let launch_request = initial_url.map(LaunchRequest::new);
-    let app_mode = if launch_request.is_some() {
-        AppMode::InterceptWindow
-    } else {
-        AppMode::MainWindow
-    };
-    let native_options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title(app_mode.window_title())
-            .with_inner_size(app_mode.initial_size())
-            .with_min_inner_size(app_mode.min_size())
-            .with_active(true),
-        ..Default::default()
-    };
+    let ipc_receiver = Arc::new(Mutex::new(ipc_receiver));
+    let settings = fonts::settings();
 
-    eframe::run_native(
-        app_mode.window_title(),
-        native_options,
-        Box::new(move |cc| {
-            fonts::configure(&cc.egui_ctx);
-            Ok(Box::new(LinkInterceptorApp::new(
-                launch_request.clone(),
-                ipc_receiver,
-            )))
-        }),
+    iced::daemon(
+        move || {
+            let ipc_receiver = ipc_receiver
+                .lock()
+                .ok()
+                .and_then(|mut receiver| receiver.take());
+            LinkInterceptorApp::boot(launch_request.clone(), ipc_receiver)
+        },
+        LinkInterceptorApp::update,
+        LinkInterceptorApp::view,
     )
+    .title(LinkInterceptorApp::title)
+    .subscription(LinkInterceptorApp::subscription)
+    .settings(settings)
+    .run()
 }

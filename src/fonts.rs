@@ -1,40 +1,50 @@
-use eframe::egui::{self, FontData, FontDefinitions, FontFamily};
-use std::{fs, path::Path};
+use iced::{Font, Settings};
+use std::{borrow::Cow, fs, path::Path};
 
-const CJK_FONT_NAME: &str = "system_cjk";
-
-const WINDOWS_CJK_FONT_CANDIDATES: &[&str] = &[
-    r"C:\Windows\Fonts\msyh.ttc",
-    r"C:\Windows\Fonts\msyh.ttf",
-    r"C:\Windows\Fonts\simsun.ttc",
-    r"C:\Windows\Fonts\simhei.ttf",
-    r"C:\Windows\Fonts\NotoSansCJK-Regular.ttc",
-];
-
-pub fn configure(ctx: &egui::Context) {
-    let Some(bytes) = load_first_available_font(WINDOWS_CJK_FONT_CANDIDATES) else {
-        return;
-    };
-
-    let mut fonts = FontDefinitions::default();
-    fonts.font_data.insert(
-        CJK_FONT_NAME.to_owned(),
-        std::sync::Arc::new(FontData::from_owned(bytes)),
-    );
-
-    if let Some(family) = fonts.families.get_mut(&FontFamily::Proportional) {
-        family.insert(0, CJK_FONT_NAME.to_owned());
-    }
-    if let Some(family) = fonts.families.get_mut(&FontFamily::Monospace) {
-        family.push(CJK_FONT_NAME.to_owned());
-    }
-
-    ctx.set_fonts(fonts);
+struct FontCandidate {
+    path: &'static str,
+    family_name: &'static str,
 }
 
-fn load_first_available_font(paths: &[&str]) -> Option<Vec<u8>> {
-    paths
-        .iter()
-        .map(Path::new)
-        .find_map(|path| fs::read(path).ok())
+const WINDOWS_CJK_FONT_CANDIDATES: &[FontCandidate] = &[
+    FontCandidate {
+        path: r"C:\Windows\Fonts\msyh.ttc",
+        family_name: "Microsoft YaHei",
+    },
+    FontCandidate {
+        path: r"C:\Windows\Fonts\msyh.ttf",
+        family_name: "Microsoft YaHei",
+    },
+    FontCandidate {
+        path: r"C:\Windows\Fonts\simsun.ttc",
+        family_name: "SimSun",
+    },
+    FontCandidate {
+        path: r"C:\Windows\Fonts\simhei.ttf",
+        family_name: "SimHei",
+    },
+    FontCandidate {
+        path: r"C:\Windows\Fonts\NotoSansCJK-Regular.ttc",
+        family_name: "Noto Sans CJK SC",
+    },
+];
+
+pub fn settings() -> Settings {
+    let Some((bytes, family_name)) = load_first_available_font(WINDOWS_CJK_FONT_CANDIDATES) else {
+        return Settings::default();
+    };
+
+    Settings {
+        fonts: vec![Cow::Owned(bytes)],
+        default_font: Font::with_name(family_name),
+        ..Settings::default()
+    }
+}
+
+fn load_first_available_font(candidates: &[FontCandidate]) -> Option<(Vec<u8>, &'static str)> {
+    candidates.iter().find_map(|candidate| {
+        fs::read(Path::new(candidate.path))
+            .ok()
+            .map(|bytes| (bytes, candidate.family_name))
+    })
 }

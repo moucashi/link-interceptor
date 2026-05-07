@@ -753,7 +753,7 @@ impl LinkInterceptorApp {
                     entry.open_count
                 )));
             rows = rows
-                .push(centered_row(12).push(actions).push(details))
+                .push(top_aligned_row(12).push(actions).push(details))
                 .push(rule::horizontal(1));
         }
 
@@ -791,7 +791,7 @@ impl LinkInterceptorApp {
                     entry.added_at.format("%Y-%m-%d %H:%M:%S")
                 )));
             rows = rows
-                .push(centered_row(12).push(actions).push(details))
+                .push(top_aligned_row(12).push(actions).push(details))
                 .push(rule::horizontal(1));
         }
 
@@ -1074,6 +1074,12 @@ fn centered_row<'a>(spacing: u32) -> Row<'a, Message> {
     Row::new()
         .spacing(spacing)
         .align_y(alignment::Vertical::Center)
+}
+
+fn top_aligned_row<'a>(spacing: u32) -> Row<'a, Message> {
+    Row::new()
+        .spacing(spacing)
+        .align_y(alignment::Vertical::Top)
 }
 
 fn tab_button(active_tab: Tab, tab: Tab, label: &'static str) -> Element<'static, Message> {

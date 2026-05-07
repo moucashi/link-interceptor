@@ -457,6 +457,7 @@ impl LinkInterceptorApp {
         ui.add(
             egui::TextEdit::multiline(&mut window.url)
                 .desired_rows(4)
+                .desired_width(ui.available_width())
                 .lock_focus(true)
                 .hint_text("URL 或 deeplink"),
         );

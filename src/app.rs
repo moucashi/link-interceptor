@@ -167,9 +167,9 @@ impl LinkInterceptorApp {
         }
     }
 
-    fn open_intercept_window(&mut self, url: String) {
+    fn open_intercept_window(&mut self, url: String, record_history: bool) {
         let url = url.trim().to_owned();
-        if !url.is_empty() {
+        if record_history && !url.is_empty() {
             storage::record_history(&mut self.history, &url);
             if let Some(store) = &self.store {
                 let _ = store.save_history(&self.history);
@@ -213,8 +213,8 @@ impl LinkInterceptorApp {
             let _ = store.save_history(&self.history);
         }
         match windows_integration::launch_candidate(candidate, url) {
-            Ok(()) => format!("已使用 {} 打开", candidate.name),
-            Err(error) => format!("使用 {} 打开失败：{error}", candidate.name),
+            Ok(()) => format!("已通过 {} 打开", candidate.name),
+            Err(error) => format!("{} 打开失败：{error}", candidate.name),
         }
     }
 
@@ -258,7 +258,7 @@ impl LinkInterceptorApp {
         for command in commands {
             match command {
                 IpcCommand::ShowMain => self.show_main_window(ctx),
-                IpcCommand::OpenIntercept { url } => self.open_intercept_window(url),
+                IpcCommand::OpenIntercept { url } => self.open_intercept_window(url, true),
             }
         }
     }
@@ -496,14 +496,14 @@ impl LinkInterceptorApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             for entry in rows {
                 ui.horizontal(|ui| {
-                    if ui.button("使用").clicked() {
-                        self.open_intercept_window(entry.url.clone());
-                    }
                     if ui.button("删除").clicked() {
                         self.history.retain(|item| item.url != entry.url);
                         if let Some(store) = &self.store {
                             let _ = store.save_history(&self.history);
                         }
+                    }
+                    if ui.button("打开").clicked() {
+                        self.open_intercept_window(entry.url.clone(), false);
                     }
                     ui.vertical(|ui| {
                         ui.label(&entry.url);
@@ -536,14 +536,14 @@ impl LinkInterceptorApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             for entry in rows {
                 ui.horizontal(|ui| {
-                    if ui.button("使用").clicked() {
-                        self.open_intercept_window(entry.url.clone());
-                    }
                     if ui.button("移除").clicked() {
                         self.favorites.retain(|item| item.url != entry.url);
                         if let Some(store) = &self.store {
                             let _ = store.save_favorites(&self.favorites);
                         }
+                    }
+                    if ui.button("打开").clicked() {
+                        self.open_intercept_window(entry.url.clone(), false);
                     }
                     ui.vertical(|ui| {
                         ui.label(&entry.url);

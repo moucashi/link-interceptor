@@ -91,24 +91,16 @@ pub fn build_candidates(config: &Config, url: &str) -> Vec<OpenCandidate> {
     }
 
     candidates.push(windows_integration::shell_fallback_candidate());
-    mark_primary_and_sort(&mut candidates, is_web, parts.domain.is_some());
+    sort_candidates(&mut candidates, is_web);
     deduplicate(candidates)
 }
 
-fn mark_primary_and_sort(candidates: &mut [OpenCandidate], is_web: bool, has_domain: bool) {
-    for candidate in candidates.iter_mut() {
-        candidate.is_primary = match candidate.kind {
-            CandidateKind::Browser => is_web,
-            CandidateKind::ProtocolHandler => !is_web,
-            CandidateKind::DomainApp => is_web && has_domain,
-            CandidateKind::CustomApp | CandidateKind::ShellFallback => false,
-        };
-    }
+fn sort_candidates(candidates: &mut [OpenCandidate], is_web: bool) {
     candidates.sort_by_key(|candidate| {
         let rank = match candidate.kind {
-            CandidateKind::DomainApp if candidate.is_primary => 0,
-            CandidateKind::ProtocolHandler if candidate.is_primary => 0,
-            CandidateKind::Browser if candidate.is_primary => 1,
+            CandidateKind::DomainApp if is_web => 0,
+            CandidateKind::ProtocolHandler if !is_web => 0,
+            CandidateKind::Browser if is_web => 1,
             CandidateKind::Browser => 2,
             CandidateKind::ProtocolHandler => 3,
             CandidateKind::DomainApp => 4,
@@ -189,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn domain_app_is_promoted_for_matching_http_url() {
+    fn matching_domain_rule_adds_domain_app_candidate() {
         let config = Config {
             custom_apps: vec![CustomApp {
                 name: "Example App".to_owned(),
@@ -206,6 +198,6 @@ mod tests {
             .iter()
             .find(|candidate| candidate.kind == CandidateKind::DomainApp)
             .unwrap();
-        assert!(app.is_primary);
+        assert_eq!(app.name, "Example App");
     }
 }

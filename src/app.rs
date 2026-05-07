@@ -460,12 +460,8 @@ impl LinkInterceptorApp {
         egui::ScrollArea::vertical().show(ui, |ui| {
             for candidate in candidates {
                 ui.horizontal(|ui| {
-                    let label = if candidate.is_primary {
-                        format!("{}  ·  推荐", candidate.name)
-                    } else {
-                        candidate.name.clone()
-                    };
-                    let button = ui.add_enabled(candidate.available, egui::Button::new(label));
+                    let button =
+                        ui.add_enabled(candidate.available, egui::Button::new(&candidate.name));
                     if button.clicked() {
                         window.status = self.open_candidate_for_url(&candidate, &window.url);
                     }

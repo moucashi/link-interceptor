@@ -104,7 +104,6 @@ pub struct OpenCandidate {
     pub command: Option<String>,
     pub args_template: String,
     pub available: bool,
-    pub is_primary: bool,
     pub reason: String,
 }
 
@@ -124,7 +123,6 @@ impl OpenCandidate {
             command,
             args_template: args_template.into(),
             available,
-            is_primary: false,
             reason: reason.into(),
         }
     }

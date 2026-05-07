@@ -116,12 +116,13 @@ impl LinkInterceptorApp {
         let (root_window, next_intercept_id) = if initial_url.is_empty() {
             (RootWindow::Main, 1)
         } else {
+            let bring_new_windows_to_front = config.bring_new_windows_to_front;
             (
                 RootWindow::Intercept(InterceptWindow {
                     id: 1,
                     url: initial_url,
                     status: String::new(),
-                    bring_to_front: true,
+                    bring_to_front: bring_new_windows_to_front,
                 }),
                 2,
             )
@@ -190,7 +191,7 @@ impl LinkInterceptorApp {
             id: self.next_intercept_id,
             url,
             status: String::new(),
-            bring_to_front: true,
+            bring_to_front: self.config.bring_new_windows_to_front,
         });
         self.next_intercept_id += 1;
     }
@@ -236,10 +237,13 @@ impl LinkInterceptorApp {
                 bring_viewport_to_front(ctx, egui::ViewportId::ROOT);
             }
             RootWindow::Intercept(_) => {
+                let was_open = self.secondary_main_open;
                 self.secondary_main_open = true;
-                self.secondary_main_bring_to_front = true;
                 let viewport_id = egui::ViewportId::from_hash_of("main-window");
-                bring_viewport_to_front(ctx, viewport_id);
+                if was_open || self.config.bring_new_windows_to_front {
+                    self.secondary_main_bring_to_front = true;
+                    bring_viewport_to_front(ctx, viewport_id);
+                }
             }
         }
     }
@@ -354,7 +358,7 @@ impl LinkInterceptorApp {
             .with_title(AppMode::MainWindow.window_title())
             .with_inner_size(AppMode::MainWindow.initial_size())
             .with_min_inner_size(AppMode::MainWindow.min_size())
-            .with_active(true);
+            .with_active(should_bring_to_front);
         let close_requested = ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
             if should_bring_to_front {
                 bring_current_viewport_to_front(ctx);
@@ -411,7 +415,7 @@ impl LinkInterceptorApp {
                 .with_title(format!("拦截 URL #{}", window.id))
                 .with_inner_size(AppMode::InterceptWindow.initial_size())
                 .with_min_inner_size(AppMode::InterceptWindow.min_size())
-                .with_active(true);
+                .with_active(should_bring_to_front);
             let close_requested =
                 ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
                     if should_bring_to_front {
@@ -686,6 +690,18 @@ impl LinkInterceptorApp {
     }
 
     fn ui_settings(&mut self, ui: &mut egui::Ui) {
+        ui.heading("窗口");
+        if ui
+            .checkbox(
+                &mut self.config.bring_new_windows_to_front,
+                "打开新窗口时自动置顶",
+            )
+            .changed()
+        {
+            self.persist_config();
+        }
+
+        ui.separator();
         ui.heading("自定义应用");
         let mut remove_app = None;
         for (index, app) in self.config.custom_apps.iter_mut().enumerate() {

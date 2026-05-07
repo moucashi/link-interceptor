@@ -160,8 +160,15 @@ mod tests {
         let config = Config {
             custom_apps: vec![],
             domain_rules: vec![],
+            ..Default::default()
         };
         store.save_config(&config).unwrap();
         assert_eq!(store.load_config().unwrap(), config);
+    }
+
+    #[test]
+    fn legacy_config_defaults_to_bringing_new_windows_to_front() {
+        let config: Config = serde_yaml::from_str("custom_apps: []\ndomain_rules: []\n").unwrap();
+        assert!(config.bring_new_windows_to_front);
     }
 }

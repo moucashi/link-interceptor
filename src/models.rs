@@ -75,6 +75,8 @@ impl Default for DomainRule {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
+    #[serde(default = "default_bring_new_windows_to_front")]
+    pub bring_new_windows_to_front: bool,
     pub custom_apps: Vec<CustomApp>,
     pub domain_rules: Vec<DomainRule>,
 }
@@ -82,10 +84,15 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            bring_new_windows_to_front: default_bring_new_windows_to_front(),
             custom_apps: Vec::new(),
             domain_rules: Vec::new(),
         }
     }
+}
+
+fn default_bring_new_windows_to_front() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

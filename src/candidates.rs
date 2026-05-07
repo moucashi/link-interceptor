@@ -192,6 +192,7 @@ mod tests {
                 pattern: "example.com".to_owned(),
                 app_name: "Example App".to_owned(),
             }],
+            ..Default::default()
         };
         let candidates = build_candidates(&config, "https://example.com");
         let app = candidates

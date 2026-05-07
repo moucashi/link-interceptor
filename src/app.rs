@@ -51,6 +51,7 @@ pub struct LinkInterceptorApp {
     root_window: RootWindow,
     intercept_windows: Vec<InterceptWindow>,
     secondary_main_open: bool,
+    secondary_main_bring_to_front: bool,
     store: Option<Store>,
     config: Config,
     history: Vec<HistoryEntry>,
@@ -74,6 +75,7 @@ struct InterceptWindow {
     id: u64,
     url: String,
     status: String,
+    bring_to_front: bool,
 }
 
 struct ClearHistoryConfirmation {
@@ -119,6 +121,7 @@ impl LinkInterceptorApp {
                     id: 1,
                     url: initial_url,
                     status: String::new(),
+                    bring_to_front: true,
                 }),
                 2,
             )
@@ -130,6 +133,7 @@ impl LinkInterceptorApp {
             root_window,
             intercept_windows: Vec::new(),
             secondary_main_open: false,
+            secondary_main_bring_to_front: false,
             store,
             config,
             history,
@@ -186,6 +190,7 @@ impl LinkInterceptorApp {
             id: self.next_intercept_id,
             url,
             status: String::new(),
+            bring_to_front: true,
         });
         self.next_intercept_id += 1;
     }
@@ -228,29 +233,13 @@ impl LinkInterceptorApp {
     fn show_main_window(&mut self, ctx: &egui::Context) {
         match self.root_window {
             RootWindow::Main => {
-                ctx.send_viewport_cmd_to(
-                    egui::ViewportId::ROOT,
-                    egui::ViewportCommand::Minimized(false),
-                );
-                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
-                ctx.send_viewport_cmd_to(
-                    egui::ViewportId::ROOT,
-                    egui::ViewportCommand::RequestUserAttention(
-                        egui::UserAttentionType::Informational,
-                    ),
-                );
+                bring_viewport_to_front(ctx, egui::ViewportId::ROOT);
             }
             RootWindow::Intercept(_) => {
                 self.secondary_main_open = true;
+                self.secondary_main_bring_to_front = true;
                 let viewport_id = egui::ViewportId::from_hash_of("main-window");
-                ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Minimized(false));
-                ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Focus);
-                ctx.send_viewport_cmd_to(
-                    viewport_id,
-                    egui::ViewportCommand::RequestUserAttention(
-                        egui::UserAttentionType::Informational,
-                    ),
-                );
+                bring_viewport_to_front(ctx, viewport_id);
             }
         }
     }
@@ -302,6 +291,10 @@ impl LinkInterceptorApp {
                     "拦截 URL #{}",
                     window.id
                 )));
+                if window.bring_to_front {
+                    bring_current_viewport_to_front(ctx);
+                    window.bring_to_front = false;
+                }
                 let close_requested = viewport_close_requested(ctx);
                 egui::TopBottomPanel::bottom("root_intercept_status").show(ctx, |ui| {
                     ui.horizontal(|ui| {
@@ -356,18 +349,26 @@ impl LinkInterceptorApp {
         }
 
         let viewport_id = egui::ViewportId::from_hash_of("main-window");
+        let should_bring_to_front = self.secondary_main_bring_to_front;
         let builder = egui::ViewportBuilder::default()
             .with_title(AppMode::MainWindow.window_title())
             .with_inner_size(AppMode::MainWindow.initial_size())
             .with_min_inner_size(AppMode::MainWindow.min_size())
             .with_active(true);
         let close_requested = ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
+            if should_bring_to_front {
+                bring_current_viewport_to_front(ctx);
+            }
             let close_requested = viewport_close_requested(ctx);
             self.ui_main(ctx);
             close_requested
         });
+        if should_bring_to_front {
+            self.secondary_main_bring_to_front = false;
+        }
         if close_requested {
             self.secondary_main_open = false;
+            self.secondary_main_bring_to_front = false;
         }
     }
 
@@ -405,6 +406,7 @@ impl LinkInterceptorApp {
         let mut open_windows = Vec::new();
         for mut window in std::mem::take(&mut self.intercept_windows) {
             let viewport_id = egui::ViewportId::from_hash_of(("intercept", window.id));
+            let should_bring_to_front = window.bring_to_front;
             let builder = egui::ViewportBuilder::default()
                 .with_title(format!("拦截 URL #{}", window.id))
                 .with_inner_size(AppMode::InterceptWindow.initial_size())
@@ -412,6 +414,9 @@ impl LinkInterceptorApp {
                 .with_active(true);
             let close_requested =
                 ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
+                    if should_bring_to_front {
+                        bring_current_viewport_to_front(ctx);
+                    }
                     let close_requested = viewport_close_requested(ctx);
                     egui::TopBottomPanel::bottom(format!("intercept_status_{}", window.id)).show(
                         ctx,
@@ -431,6 +436,9 @@ impl LinkInterceptorApp {
                     });
                     close_requested
                 });
+            if should_bring_to_front {
+                window.bring_to_front = false;
+            }
             if !close_requested {
                 open_windows.push(window);
             }
@@ -788,4 +796,21 @@ fn viewport_close_requested(ctx: &egui::Context) -> bool {
         input.viewport().close_requested()
             || (input.modifiers.ctrl && input.key_pressed(egui::Key::W))
     })
+}
+
+fn bring_current_viewport_to_front(ctx: &egui::Context) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+    ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+        egui::UserAttentionType::Informational,
+    ));
+}
+
+fn bring_viewport_to_front(ctx: &egui::Context, viewport_id: egui::ViewportId) {
+    ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Minimized(false));
+    ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Focus);
+    ctx.send_viewport_cmd_to(
+        viewport_id,
+        egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational),
+    );
 }

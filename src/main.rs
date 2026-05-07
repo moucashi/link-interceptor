@@ -35,7 +35,8 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title(app_mode.window_title())
             .with_inner_size(app_mode.initial_size())
-            .with_min_inner_size(app_mode.min_size()),
+            .with_min_inner_size(app_mode.min_size())
+            .with_active(true),
         ..Default::default()
     };
 

@@ -1,26 +1,60 @@
 use crate::{
     candidates,
+    ipc::IpcCommand,
     models::{Config, CustomApp, DomainRule, FavoriteEntry, HistoryEntry, LaunchRequest},
     storage::{self, Store},
     windows_integration::{self, RegistrationState},
 };
 use eframe::egui;
+use std::sync::mpsc::Receiver;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
-    Intercept,
     History,
     Favorites,
     Registration,
     Settings,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    MainWindow,
+    InterceptWindow,
+}
+
+impl AppMode {
+    pub fn window_title(self) -> &'static str {
+        match self {
+            Self::MainWindow => "Link Interceptor",
+            Self::InterceptWindow => "拦截 URL",
+        }
+    }
+
+    pub fn initial_size(self) -> [f32; 2] {
+        match self {
+            Self::MainWindow => [1024.0, 720.0],
+            Self::InterceptWindow => [860.0, 560.0],
+        }
+    }
+
+    pub fn min_size(self) -> [f32; 2] {
+        match self {
+            Self::MainWindow => [760.0, 520.0],
+            Self::InterceptWindow => [640.0, 420.0],
+        }
+    }
+}
+
 pub struct LinkInterceptorApp {
+    ipc_receiver: Option<Receiver<IpcCommand>>,
+    next_intercept_id: u64,
+    root_window: RootWindow,
+    intercept_windows: Vec<InterceptWindow>,
+    secondary_main_open: bool,
     store: Option<Store>,
     config: Config,
     history: Vec<HistoryEntry>,
     favorites: Vec<FavoriteEntry>,
-    current_url: String,
     active_tab: Tab,
     history_query: String,
     favorites_query: String,
@@ -30,8 +64,22 @@ pub struct LinkInterceptorApp {
     new_domain_rule: DomainRule,
 }
 
+enum RootWindow {
+    Main,
+    Intercept(InterceptWindow),
+}
+
+struct InterceptWindow {
+    id: u64,
+    url: String,
+    status: String,
+}
+
 impl LinkInterceptorApp {
-    pub fn new(launch_request: Option<LaunchRequest>) -> Self {
+    pub fn new(
+        launch_request: Option<LaunchRequest>,
+        ipc_receiver: Option<Receiver<IpcCommand>>,
+    ) -> Self {
         let store = Store::new().ok();
         let config = store
             .as_ref()
@@ -47,24 +95,40 @@ impl LinkInterceptorApp {
             .and_then(|store| store.load_favorites().ok())
             .unwrap_or_default();
 
-        let current_url = launch_request
+        let initial_url = launch_request
             .as_ref()
             .map(|request| request.raw_url.clone())
             .unwrap_or_default();
-        if !current_url.is_empty() {
-            storage::record_history(&mut history, &current_url);
+        if !initial_url.is_empty() {
+            storage::record_history(&mut history, &initial_url);
             if let Some(store) = &store {
                 let _ = store.save_history(&history);
             }
         }
+        let (root_window, next_intercept_id) = if initial_url.is_empty() {
+            (RootWindow::Main, 1)
+        } else {
+            (
+                RootWindow::Intercept(InterceptWindow {
+                    id: 1,
+                    url: initial_url,
+                    status: String::new(),
+                }),
+                2,
+            )
+        };
 
         Self {
+            ipc_receiver,
+            next_intercept_id,
+            root_window,
+            intercept_windows: Vec::new(),
+            secondary_main_open: false,
             store,
             config,
             history,
             favorites,
-            current_url,
-            active_tab: Tab::Intercept,
+            active_tab: Tab::History,
             history_query: String::new(),
             favorites_query: String::new(),
             status: String::new(),
@@ -103,56 +167,191 @@ impl LinkInterceptorApp {
         }
     }
 
-    fn set_current_url(&mut self, url: String) {
-        self.current_url = url;
-        if !self.current_url.trim().is_empty() {
-            storage::record_history(&mut self.history, self.current_url.trim());
+    fn open_intercept_window(&mut self, url: String) {
+        let url = url.trim().to_owned();
+        if !url.is_empty() {
+            storage::record_history(&mut self.history, &url);
             if let Some(store) = &self.store {
                 let _ = store.save_history(&self.history);
             }
         }
-        self.active_tab = Tab::Intercept;
+        self.intercept_windows.push(InterceptWindow {
+            id: self.next_intercept_id,
+            url,
+            status: String::new(),
+        });
+        self.next_intercept_id += 1;
     }
 
-    fn toggle_current_favorite(&mut self) {
-        let url = self.current_url.trim();
+    fn toggle_favorite_url(&mut self, url: &str) -> String {
+        let url = url.trim();
         if url.is_empty() {
-            self.status = "没有可收藏的 URL".to_owned();
-            return;
+            return "没有可收藏的 URL".to_owned();
         }
         let added = storage::toggle_favorite(&mut self.favorites, url);
         if let Some(store) = &self.store {
             let _ = store.save_favorites(&self.favorites);
         }
-        self.status = if added {
+        if added {
             "已添加到收藏".to_owned()
         } else {
             "已从收藏移除".to_owned()
-        };
+        }
     }
 
-    fn open_candidate(&mut self, candidate: &crate::models::OpenCandidate) {
-        let url = self.current_url.trim();
+    fn open_candidate_for_url(
+        &mut self,
+        candidate: &crate::models::OpenCandidate,
+        url: &str,
+    ) -> String {
+        let url = url.trim();
         if url.is_empty() {
-            self.status = "没有可打开的 URL".to_owned();
-            return;
+            return "没有可打开的 URL".to_owned();
         }
         storage::record_history(&mut self.history, url);
         if let Some(store) = &self.store {
             let _ = store.save_history(&self.history);
         }
         match windows_integration::launch_candidate(candidate, url) {
-            Ok(()) => self.status = format!("已使用 {} 打开", candidate.name),
-            Err(error) => self.status = format!("使用 {} 打开失败：{error}", candidate.name),
+            Ok(()) => format!("已使用 {} 打开", candidate.name),
+            Err(error) => format!("使用 {} 打开失败：{error}", candidate.name),
+        }
+    }
+
+    fn show_main_window(&mut self, ctx: &egui::Context) {
+        match self.root_window {
+            RootWindow::Main => {
+                ctx.send_viewport_cmd_to(
+                    egui::ViewportId::ROOT,
+                    egui::ViewportCommand::Minimized(false),
+                );
+                ctx.send_viewport_cmd_to(egui::ViewportId::ROOT, egui::ViewportCommand::Focus);
+                ctx.send_viewport_cmd_to(
+                    egui::ViewportId::ROOT,
+                    egui::ViewportCommand::RequestUserAttention(
+                        egui::UserAttentionType::Informational,
+                    ),
+                );
+            }
+            RootWindow::Intercept(_) => {
+                self.secondary_main_open = true;
+                let viewport_id = egui::ViewportId::from_hash_of("main-window");
+                ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Minimized(false));
+                ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Focus);
+                ctx.send_viewport_cmd_to(
+                    viewport_id,
+                    egui::ViewportCommand::RequestUserAttention(
+                        egui::UserAttentionType::Informational,
+                    ),
+                );
+            }
+        }
+    }
+
+    fn drain_ipc(&mut self, ctx: &egui::Context) {
+        let mut commands = Vec::new();
+        if let Some(receiver) = &self.ipc_receiver {
+            while let Ok(command) = receiver.try_recv() {
+                commands.push(command);
+            }
+        }
+        for command in commands {
+            match command {
+                IpcCommand::ShowMain => self.show_main_window(ctx),
+                IpcCommand::OpenIntercept { url } => self.open_intercept_window(url),
+            }
         }
     }
 }
 
 impl eframe::App for LinkInterceptorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.drain_ipc(ctx);
+        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        self.show_secondary_main_window(ctx);
+        self.show_intercept_windows(ctx);
+        self.show_root_window(ctx);
+    }
+}
+
+impl LinkInterceptorApp {
+    fn show_root_window(&mut self, ctx: &egui::Context) {
+        let root_window = std::mem::replace(&mut self.root_window, RootWindow::Main);
+        match root_window {
+            RootWindow::Main => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(
+                    AppMode::MainWindow.window_title().to_owned(),
+                ));
+                self.ui_main(ctx);
+                self.root_window = RootWindow::Main;
+            }
+            RootWindow::Intercept(mut window) => {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
+                    "拦截 URL #{}",
+                    window.id
+                )));
+                let close_requested = ctx.input(|input| input.viewport().close_requested());
+                egui::TopBottomPanel::bottom("root_intercept_status").show(ctx, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(if window.status.is_empty() {
+                            "就绪"
+                        } else {
+                            &window.status
+                        });
+                    });
+                });
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    self.ui_intercept(ctx, ui, &mut window);
+                });
+
+                if close_requested {
+                    self.replace_closed_root(ctx);
+                } else {
+                    self.root_window = RootWindow::Intercept(window);
+                }
+            }
+        }
+    }
+
+    fn replace_closed_root(&mut self, ctx: &egui::Context) {
+        if self.secondary_main_open {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.secondary_main_open = false;
+            self.root_window = RootWindow::Main;
+            return;
+        }
+        if let Some(window) = self.intercept_windows.pop() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.root_window = RootWindow::Intercept(window);
+            return;
+        }
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+    }
+
+    fn show_secondary_main_window(&mut self, ctx: &egui::Context) {
+        if !self.secondary_main_open {
+            return;
+        }
+
+        let viewport_id = egui::ViewportId::from_hash_of("main-window");
+        let builder = egui::ViewportBuilder::default()
+            .with_title(AppMode::MainWindow.window_title())
+            .with_inner_size(AppMode::MainWindow.initial_size())
+            .with_min_inner_size(AppMode::MainWindow.min_size())
+            .with_active(true);
+        let close_requested = ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
+            let close_requested = ctx.input(|input| input.viewport().close_requested());
+            self.ui_main(ctx);
+            close_requested
+        });
+        if close_requested {
+            self.secondary_main_open = false;
+        }
+    }
+
+    fn ui_main(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
-                tab_button(ui, &mut self.active_tab, Tab::Intercept, "拦截");
                 tab_button(ui, &mut self.active_tab, Tab::History, "历史记录");
                 tab_button(ui, &mut self.active_tab, Tab::Favorites, "收藏");
                 tab_button(ui, &mut self.active_tab, Tab::Registration, "注册状态");
@@ -171,21 +370,60 @@ impl eframe::App for LinkInterceptorApp {
         });
 
         egui::CentralPanel::default().show(ctx, |ui| match self.active_tab {
-            Tab::Intercept => self.ui_intercept(ctx, ui),
             Tab::History => self.ui_history(ui),
             Tab::Favorites => self.ui_favorites(ui),
             Tab::Registration => self.ui_registration(ui),
             Tab::Settings => self.ui_settings(ui),
         });
     }
-}
 
-impl LinkInterceptorApp {
-    fn ui_intercept(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+    fn show_intercept_windows(&mut self, ctx: &egui::Context) {
+        let mut open_windows = Vec::new();
+        for mut window in std::mem::take(&mut self.intercept_windows) {
+            let viewport_id = egui::ViewportId::from_hash_of(("intercept", window.id));
+            let builder = egui::ViewportBuilder::default()
+                .with_title(format!("拦截 URL #{}", window.id))
+                .with_inner_size(AppMode::InterceptWindow.initial_size())
+                .with_min_inner_size(AppMode::InterceptWindow.min_size())
+                .with_active(true);
+            let close_requested =
+                ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
+                    let close_requested = ctx.input(|input| input.viewport().close_requested());
+                    egui::TopBottomPanel::bottom(format!("intercept_status_{}", window.id)).show(
+                        ctx,
+                        |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(if window.status.is_empty() {
+                                    "就绪"
+                                } else {
+                                    &window.status
+                                });
+                            });
+                        },
+                    );
+
+                    egui::CentralPanel::default().show(ctx, |ui| {
+                        self.ui_intercept(ctx, ui, &mut window);
+                    });
+                    close_requested
+                });
+            if !close_requested {
+                open_windows.push(window);
+            }
+        }
+        self.intercept_windows = open_windows;
+    }
+
+    fn ui_intercept(
+        &mut self,
+        ctx: &egui::Context,
+        ui: &mut egui::Ui,
+        window: &mut InterceptWindow,
+    ) {
         ui.heading("拦截到的 URL");
         ui.add_space(8.0);
         ui.add(
-            egui::TextEdit::multiline(&mut self.current_url)
+            egui::TextEdit::multiline(&mut window.url)
                 .desired_rows(4)
                 .lock_focus(true)
                 .hint_text("URL 或 deeplink"),
@@ -193,32 +431,32 @@ impl LinkInterceptorApp {
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             if ui.button("复制").clicked() {
-                ctx.copy_text(self.current_url.clone());
-                self.status = "已复制 URL".to_owned();
+                ctx.copy_text(window.url.clone());
+                window.status = "已复制 URL".to_owned();
             }
-            let favorite_label = if storage::is_favorite(&self.favorites, self.current_url.trim()) {
+            let favorite_label = if storage::is_favorite(&self.favorites, window.url.trim()) {
                 "取消收藏"
             } else {
                 "收藏"
             };
             if ui.button(favorite_label).clicked() {
-                self.toggle_current_favorite();
+                window.status = self.toggle_favorite_url(&window.url);
             }
             if ui.button("保存到历史记录").clicked() {
-                let url = self.current_url.trim().to_owned();
+                let url = window.url.trim().to_owned();
                 if !url.is_empty() {
                     storage::record_history(&mut self.history, &url);
                     if let Some(store) = &self.store {
                         let _ = store.save_history(&self.history);
                     }
-                    self.status = "已保存到历史记录".to_owned();
+                    window.status = "已保存到历史记录".to_owned();
                 }
             }
         });
 
         ui.separator();
         ui.heading("打开方式");
-        let candidates = candidates::build_candidates(&self.config, self.current_url.trim());
+        let candidates = candidates::build_candidates(&self.config, window.url.trim());
         egui::ScrollArea::vertical().show(ui, |ui| {
             for candidate in candidates {
                 ui.horizontal(|ui| {
@@ -229,7 +467,7 @@ impl LinkInterceptorApp {
                     };
                     let button = ui.add_enabled(candidate.available, egui::Button::new(label));
                     if button.clicked() {
-                        self.open_candidate(&candidate);
+                        window.status = self.open_candidate_for_url(&candidate, &window.url);
                     }
                     ui.label(candidate_kind_label(candidate.kind.clone()));
                     ui.small(candidate.reason);
@@ -263,7 +501,7 @@ impl LinkInterceptorApp {
             for entry in rows {
                 ui.horizontal(|ui| {
                     if ui.button("使用").clicked() {
-                        self.set_current_url(entry.url.clone());
+                        self.open_intercept_window(entry.url.clone());
                     }
                     if ui.button("删除").clicked() {
                         self.history.retain(|item| item.url != entry.url);
@@ -303,7 +541,7 @@ impl LinkInterceptorApp {
             for entry in rows {
                 ui.horizontal(|ui| {
                     if ui.button("使用").clicked() {
-                        self.set_current_url(entry.url.clone());
+                        self.open_intercept_window(entry.url.clone());
                     }
                     if ui.button("移除").clicked() {
                         self.favorites.retain(|item| item.url != entry.url);

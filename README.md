@@ -19,6 +19,8 @@ another registered/custom handler.
 - Configure custom applications and domain rules.
 - Register/unregister the current executable under HKCU without admin rights.
 - Open Windows Default Apps settings so the user can select this app.
+- Keep a single background process: a later launch focuses the main window or
+  asks the running process to open another interception window.
 
 ## Build
 
@@ -26,13 +28,16 @@ another registered/custom handler.
 cargo build --release
 ```
 
-Run without arguments to open the main UI:
+Run without arguments to open the main UI. If the app is already running, this
+launch exits after asking the running process to show and focus the main window:
 
 ```powershell
 cargo run
 ```
 
-Run with a URL to simulate interception:
+Run with a URL to open only an interception window. If the app is already
+running, this launch exits after asking the running process to create a new
+interception window:
 
 ```powershell
 cargo run -- "https://example.com"
@@ -62,5 +67,6 @@ If you move the portable executable, register it again from the new path.
 ## Current Scope
 
 This is a v1 portable executable implementation. It intentionally does not yet
-include an installer, auto-update, or single-instance IPC. Multiple launches can
-open multiple windows.
+include an installer or auto-update. Single-instance IPC is implemented with a
+local loopback listener; one main window is kept per process, while multiple
+interception windows can be opened.

@@ -51,7 +51,7 @@ pub struct CustomApp {
 impl Default for CustomApp {
     fn default() -> Self {
         Self {
-            name: "Custom App".to_owned(),
+            name: "自定义应用".to_owned(),
             executable: String::new(),
             args_template: "{url}".to_owned(),
         }

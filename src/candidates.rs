@@ -42,7 +42,7 @@ pub fn build_candidates(config: &Config, url: &str) -> Vec<OpenCandidate> {
             CandidateKind::Browser,
             browser.command,
             "%1",
-            "Installed browser",
+            "已安装的浏览器",
         ));
     }
 
@@ -53,7 +53,7 @@ pub fn build_candidates(config: &Config, url: &str) -> Vec<OpenCandidate> {
                 CandidateKind::ProtocolHandler,
                 handler.command,
                 "%1",
-                format!("Registered {} protocol handler", parts.scheme),
+                format!("已注册的 {} 协议处理程序", parts.scheme),
             ));
         }
     }
@@ -69,7 +69,7 @@ pub fn build_candidates(config: &Config, url: &str) -> Vec<OpenCandidate> {
                 CandidateKind::DomainApp,
                 Some(app.executable.clone()),
                 app.args_template.clone(),
-                format!("Domain rule {}", rule.pattern),
+                format!("域名规则 {}", rule.pattern),
             ));
         }
     }
@@ -86,7 +86,7 @@ pub fn build_candidates(config: &Config, url: &str) -> Vec<OpenCandidate> {
             CandidateKind::CustomApp,
             Some(app.executable.clone()),
             app.args_template.clone(),
-            "Custom application",
+            "自定义应用",
         ));
     }
 

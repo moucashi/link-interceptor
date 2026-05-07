@@ -1,5 +1,6 @@
 mod app;
 mod candidates;
+mod fonts;
 mod models;
 mod storage;
 mod windows_integration;
@@ -21,6 +22,9 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "Link Interceptor",
         native_options,
-        Box::new(move |_cc| Ok(Box::new(LinkInterceptorApp::new(launch_request.clone())))),
+        Box::new(move |cc| {
+            fonts::configure(&cc.egui_ctx);
+            Ok(Box::new(LinkInterceptorApp::new(launch_request.clone())))
+        }),
     )
 }

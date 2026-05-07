@@ -9,11 +9,11 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum StorageError {
-    #[error("failed to resolve application data directory")]
+    #[error("无法解析应用数据目录")]
     MissingDataDir,
-    #[error("io error: {0}")]
+    #[error("I/O 错误：{0}")]
     Io(#[from] io::Error),
-    #[error("yaml error: {0}")]
+    #[error("YAML 错误：{0}")]
     Yaml(#[from] serde_yaml::Error),
 }
 

@@ -22,12 +22,12 @@ pub struct ProtocolInfo {
 
 #[derive(Debug, thiserror::Error)]
 pub enum IntegrationError {
-    #[error("windows registry error: {0}")]
+    #[error("Windows 注册表错误：{0}")]
     Registry(String),
-    #[error("io error: {0}")]
+    #[error("I/O 错误：{0}")]
     Io(#[from] std::io::Error),
     #[cfg(not(windows))]
-    #[error("operation is only available on Windows")]
+    #[error("此操作仅在 Windows 上可用")]
     UnsupportedPlatform,
 }
 
@@ -98,7 +98,7 @@ pub fn register_application() -> Result<()> {
     capabilities
         .set_value(
             "ApplicationDescription",
-            &"Intercept URLs before opening them in a browser or app.",
+            &"在使用浏览器或 App 打开 URL 前先拦截并确认。",
         )
         .map_err(registry_error)?;
     let (url_associations, _) = capabilities
@@ -210,7 +210,7 @@ pub fn discover_protocol_handler(scheme: &str) -> Option<ProtocolInfo> {
                 .get_value::<String, _>("")
                 .ok()
                 .filter(|value| !value.trim().is_empty())
-                .unwrap_or_else(|| format!("{scheme} handler"));
+                .unwrap_or_else(|| format!("{scheme} 处理程序"));
             let command = key
                 .open_subkey(r"shell\open\command")
                 .ok()
@@ -246,11 +246,11 @@ pub fn discover_app_uri_handlers(domain: &str) -> Vec<OpenCandidate> {
                 };
                 if app_uri_handlers_match_domain(&handlers, &domain) {
                     let mut candidate = OpenCandidate::new(
-                        format!("App URI handler: {app_key_name}"),
+                        format!("App URI handler：{app_key_name}"),
                         CandidateKind::DomainApp,
                         None,
                         "{url}",
-                        format!("Windows Apps for Websites match for {domain}"),
+                        format!("Windows Apps for Websites 匹配 {domain}"),
                     );
                     candidate.available = true;
                     candidates.push(candidate);
@@ -329,11 +329,11 @@ fn domain_pattern_matches(pattern: &str, domain: &str) -> bool {
 
 pub fn shell_fallback_candidate() -> OpenCandidate {
     OpenCandidate::new(
-        "Windows default handler",
+        "Windows 默认处理程序",
         CandidateKind::ShellFallback,
         None,
         "{url}",
-        "Use the current Windows default handler",
+        "使用当前 Windows 默认处理程序",
     )
 }
 

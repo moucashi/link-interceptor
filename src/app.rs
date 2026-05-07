@@ -9,7 +9,7 @@ use floem::{
     Clipboard, IntoView, Urgency, WindowIdExt,
     ext_event::create_signal_from_channel,
     keyboard::Key,
-    peniko::kurbo::Size,
+    peniko::{Color, kurbo::Size},
     prelude::*,
     reactive::{RwSignal, SignalGet, SignalUpdate, create_effect},
     views::{button, dyn_stack, dyn_view, h_stack, label, scroll, text, text_input, v_stack},
@@ -512,36 +512,63 @@ impl LinkInterceptorApp {
                         move |entry: HistoryEntry| {
                             let url = entry.url.clone();
                             h_stack((
-                                button("删除").action({
-                                    let app = app.clone();
-                                    let url = url.clone();
-                                    move || {
-                                        app.history.update(|history| {
-                                            history.retain(|item| item.url != url);
-                                        });
-                                        app.persist_history();
-                                    }
-                                }),
-                                button("打开").action({
-                                    let app = app.clone();
-                                    let url = url.clone();
-                                    move || app.open_intercept_window(url.clone(), false)
-                                }),
+                                button("删除")
+                                    .action({
+                                        let app = app.clone();
+                                        let url = url.clone();
+                                        move || {
+                                            app.history.update(|history| {
+                                                history.retain(|item| item.url != url);
+                                            });
+                                            app.persist_history();
+                                        }
+                                    })
+                                    .style(|s| s.flex_shrink(0.0)),
+                                button("打开")
+                                    .action({
+                                        let app = app.clone();
+                                        let url = url.clone();
+                                        move || app.open_intercept_window(url.clone(), false)
+                                    })
+                                    .style(|s| s.flex_shrink(0.0)),
                                 v_stack((
-                                    text(entry.url),
+                                    text(entry.url).style(|s| {
+                                        s.font_size(15.0)
+                                            .width_full()
+                                            .min_width(0.0)
+                                            .flex_shrink(1.0)
+                                    }),
                                     text(format!(
                                         "最近：{} · 次数：{}",
                                         entry.last_seen_at.format("%Y-%m-%d %H:%M:%S"),
                                         entry.open_count
                                     ))
-                                    .style(|s| s.font_size(12.0)),
-                                )),
+                                    .style(|s| {
+                                        s.font_size(11.0)
+                                            .color(Color::rgb8(100, 100, 100))
+                                            .width_full()
+                                            .min_width(0.0)
+                                    }),
+                                ))
+                                .style(|s| {
+                                    s.flex_grow(1.0)
+                                        .flex_shrink(1.0)
+                                        .flex_basis(0.0)
+                                        .width_full()
+                                        .min_width(0.0)
+                                }),
                             ))
-                            .style(|s| s.gap(8).items_start().padding(4))
+                            .style(|s| {
+                                s.gap(8)
+                                    .items_start()
+                                    .padding(4)
+                                    .width_full()
+                                    .min_width(0.0)
+                            })
                         }
                     },
                 )
-                .style(|s| s.flex_col().gap(4)),
+                .style(|s| s.flex_col().gap(4).width_full().min_width(0.0)),
             )
             .style(|s| s.flex_grow(1.0).width_full()),
         ))
@@ -576,35 +603,62 @@ impl LinkInterceptorApp {
                         move |entry: FavoriteEntry| {
                             let url = entry.url.clone();
                             h_stack((
-                                button("移除").action({
-                                    let app = app.clone();
-                                    let url = url.clone();
-                                    move || {
-                                        app.favorites.update(|favorites| {
-                                            favorites.retain(|item| item.url != url);
-                                        });
-                                        app.persist_favorites();
-                                    }
-                                }),
-                                button("打开").action({
-                                    let app = app.clone();
-                                    let url = url.clone();
-                                    move || app.open_intercept_window(url.clone(), false)
-                                }),
+                                button("移除")
+                                    .action({
+                                        let app = app.clone();
+                                        let url = url.clone();
+                                        move || {
+                                            app.favorites.update(|favorites| {
+                                                favorites.retain(|item| item.url != url);
+                                            });
+                                            app.persist_favorites();
+                                        }
+                                    })
+                                    .style(|s| s.flex_shrink(0.0)),
+                                button("打开")
+                                    .action({
+                                        let app = app.clone();
+                                        let url = url.clone();
+                                        move || app.open_intercept_window(url.clone(), false)
+                                    })
+                                    .style(|s| s.flex_shrink(0.0)),
                                 v_stack((
-                                    text(entry.url),
+                                    text(entry.url).style(|s| {
+                                        s.font_size(15.0)
+                                            .width_full()
+                                            .min_width(0.0)
+                                            .flex_shrink(1.0)
+                                    }),
                                     text(format!(
                                         "添加时间：{}",
                                         entry.added_at.format("%Y-%m-%d %H:%M:%S")
                                     ))
-                                    .style(|s| s.font_size(12.0)),
-                                )),
+                                    .style(|s| {
+                                        s.font_size(11.0)
+                                            .color(Color::rgb8(100, 100, 100))
+                                            .width_full()
+                                            .min_width(0.0)
+                                    }),
+                                ))
+                                .style(|s| {
+                                    s.flex_grow(1.0)
+                                        .flex_shrink(1.0)
+                                        .flex_basis(0.0)
+                                        .width_full()
+                                        .min_width(0.0)
+                                }),
                             ))
-                            .style(|s| s.gap(8).items_start().padding(4))
+                            .style(|s| {
+                                s.gap(8)
+                                    .items_start()
+                                    .padding(4)
+                                    .width_full()
+                                    .min_width(0.0)
+                            })
                         }
                     },
                 )
-                .style(|s| s.flex_col().gap(4)),
+                .style(|s| s.flex_col().gap(4).width_full().min_width(0.0)),
             )
             .style(|s| s.flex_grow(1.0).width_full()),
         ))

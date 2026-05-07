@@ -59,6 +59,7 @@ pub struct LinkInterceptorApp {
     active_tab: Tab,
     history_query: String,
     clear_history_confirmation: Option<ClearHistoryConfirmation>,
+    reset_config_confirmation: Option<ResetConfigConfirmation>,
     favorites_query: String,
     status: String,
     registration_state: RegistrationState,
@@ -79,6 +80,11 @@ struct InterceptWindow {
 }
 
 struct ClearHistoryConfirmation {
+    target_pos: egui::Pos2,
+    popup_pos: egui::Pos2,
+}
+
+struct ResetConfigConfirmation {
     target_pos: egui::Pos2,
     popup_pos: egui::Pos2,
 }
@@ -142,6 +148,7 @@ impl LinkInterceptorApp {
             active_tab: Tab::History,
             history_query: String::new(),
             clear_history_confirmation: None,
+            reset_config_confirmation: None,
             favorites_query: String::new(),
             status: String::new(),
             registration_state: windows_integration::registration_state(),
@@ -404,6 +411,7 @@ impl LinkInterceptorApp {
         });
 
         self.ui_clear_history_confirmation(ctx);
+        self.ui_reset_config_confirmation(ctx);
     }
 
     fn show_intercept_windows(&mut self, ctx: &egui::Context) {
@@ -614,6 +622,67 @@ impl LinkInterceptorApp {
         }
     }
 
+    fn ui_reset_config_confirmation(&mut self, ctx: &egui::Context) {
+        let Some(confirmation) = &self.reset_config_confirmation else {
+            return;
+        };
+        let target_pos = confirmation.target_pos;
+        let popup_pos = confirmation.popup_pos;
+
+        let mut cancel_requested = false;
+        let mut reset_requested = false;
+        let mut alignment_delta = None;
+
+        egui::Area::new(egui::Id::new("reset_config_confirmation"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(popup_pos)
+            .show(ctx, |ui| {
+                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                    ui.label("此操作会将设置恢复为默认值，不会删除历史记录和收藏。");
+                    ui.horizontal(|ui| {
+                        let cancel_response = ui.button("取消");
+                        alignment_delta = Some(target_pos - cancel_response.rect.center());
+                        if cancel_response.clicked() {
+                            cancel_requested = true;
+                        }
+                        if ui.button("确认恢复").clicked() {
+                            reset_requested = true;
+                        }
+                    });
+                });
+            });
+
+        if let Some(delta) = alignment_delta {
+            let is_aligned = delta.length_sq() <= 1.0;
+            if let Some(confirmation) = &mut self.reset_config_confirmation {
+                if !is_aligned {
+                    confirmation.popup_pos += delta;
+                }
+            }
+            if !is_aligned {
+                ctx.request_repaint();
+                return;
+            }
+        }
+
+        if reset_requested {
+            self.config = Config::default();
+            self.new_custom_app = CustomApp::default();
+            self.new_domain_rule = DomainRule::default();
+            if let Some(store) = &self.store {
+                match store.save_config(&self.config) {
+                    Ok(()) => self.status = "已恢复默认设置".to_owned(),
+                    Err(error) => self.status = format!("恢复默认设置失败：{error}"),
+                }
+            } else {
+                self.status = "存储目录不可用".to_owned();
+            }
+            self.reset_config_confirmation = None;
+        } else if cancel_requested {
+            self.reset_config_confirmation = None;
+        }
+    }
+
     fn ui_favorites(&mut self, ui: &mut egui::Ui) {
         ui.heading("收藏");
         ui.horizontal(|ui| {
@@ -786,9 +855,21 @@ impl LinkInterceptorApp {
         });
 
         ui.separator();
-        if ui.button("保存设置").clicked() {
-            self.persist_all();
-        }
+        ui.horizontal(|ui| {
+            if ui.button("保存设置").clicked() {
+                self.persist_all();
+            }
+            if ui.button("恢复默认设置").clicked() {
+                let target_pos = ui
+                    .ctx()
+                    .pointer_latest_pos()
+                    .unwrap_or_else(|| ui.next_widget_position());
+                self.reset_config_confirmation = Some(ResetConfigConfirmation {
+                    target_pos,
+                    popup_pos: target_pos - egui::vec2(30.0, 41.0),
+                });
+            }
+        });
     }
 }
 

@@ -171,4 +171,10 @@ mod tests {
         let config: Config = serde_yaml::from_str("custom_apps: []\ndomain_rules: []\n").unwrap();
         assert!(config.bring_new_windows_to_front);
     }
+
+    #[test]
+    fn legacy_config_defaults_to_closing_intercept_window_after_open() {
+        let config: Config = serde_yaml::from_str("custom_apps: []\ndomain_rules: []\n").unwrap();
+        assert!(config.close_intercept_window_after_open);
+    }
 }

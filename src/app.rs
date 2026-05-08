@@ -12,7 +12,10 @@ use floem::{
     peniko::{Color, kurbo::Size},
     prelude::*,
     reactive::{RwSignal, SignalGet, SignalUpdate, create_effect},
-    views::{button, dyn_stack, dyn_view, h_stack, label, scroll, text, text_input, v_stack},
+    views::{
+        button, dyn_stack, dyn_view, h_stack, label, labeled_checkbox, scroll, text, text_input,
+        v_stack,
+    },
     window::{WindowConfig, WindowId, close_window, new_window},
 };
 
@@ -751,18 +754,15 @@ impl LinkInterceptorApp {
         let app = self.clone();
         v_stack((
             text("窗口").style(|s| s.font_size(22.0)),
-            button(label(move || {
-                if app.config.get().bring_new_windows_to_front {
-                    "打开新窗口时自动置顶：开".to_owned()
-                } else {
-                    "打开新窗口时自动置顶：关".to_owned()
-                }
-            }))
-            .action({
+            labeled_checkbox(
+                move || app.config.get().bring_new_windows_to_front,
+                || "打开新窗口时自动置顶",
+            )
+            .on_update({
                 let app = self.clone();
-                move || {
+                move |checked| {
                     app.config.update(|config| {
-                        config.bring_new_windows_to_front = !config.bring_new_windows_to_front;
+                        config.bring_new_windows_to_front = checked;
                     });
                     app.persist_config();
                 }

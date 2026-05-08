@@ -77,6 +77,8 @@ impl Default for DomainRule {
 pub struct Config {
     #[serde(default = "default_bring_new_windows_to_front")]
     pub bring_new_windows_to_front: bool,
+    #[serde(default = "default_close_intercept_window_after_open")]
+    pub close_intercept_window_after_open: bool,
     pub custom_apps: Vec<CustomApp>,
     pub domain_rules: Vec<DomainRule>,
 }
@@ -85,6 +87,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             bring_new_windows_to_front: default_bring_new_windows_to_front(),
+            close_intercept_window_after_open: default_close_intercept_window_after_open(),
             custom_apps: Vec::new(),
             domain_rules: Vec::new(),
         }
@@ -92,6 +95,10 @@ impl Default for Config {
 }
 
 fn default_bring_new_windows_to_front() -> bool {
+    true
+}
+
+fn default_close_intercept_window_after_open() -> bool {
     true
 }
 

@@ -266,15 +266,15 @@ impl LinkInterceptorApp {
         &self,
         candidate: &crate::models::OpenCandidate,
         url: &str,
-    ) -> String {
+    ) -> (String, bool) {
         let url = url.trim();
         if url.is_empty() {
-            return "没有可打开的 URL".to_owned();
+            return ("没有可打开的 URL".to_owned(), false);
         }
         self.record_history(url);
         match windows_integration::launch_candidate(candidate, url) {
-            Ok(()) => format!("已通过 {} 打开", candidate.name),
-            Err(error) => format!("{} 打开失败：{error}", candidate.name),
+            Ok(()) => (format!("已通过 {} 打开", candidate.name), true),
+            Err(error) => (format!("{} 打开失败：{error}", candidate.name), false),
         }
     }
 
@@ -379,6 +379,7 @@ impl LinkInterceptorApp {
     fn intercept_window_view(&self, window_id: WindowId, initial_url: String) -> floem::AnyView {
         let url = RwSignal::new(initial_url);
         let window_status = RwSignal::new(String::new());
+        let close_after_open = RwSignal::new(self.config.get().close_intercept_window_after_open);
         let app = self.clone();
         let candidates_app = self.clone();
         v_stack((
@@ -414,8 +415,13 @@ impl LinkInterceptorApp {
                         window_status.set("已保存到历史记录".to_owned());
                     }
                 }),
+                labeled_checkbox(
+                    move || close_after_open.get(),
+                    || "打开链接后自动关闭此窗口",
+                )
+                .on_update(move |checked| close_after_open.set(checked)),
             ))
-            .style(|s| s.gap(8)),
+            .style(|s| s.gap(8).items_center()),
             text("打开方式").style(|s| s.font_size(20.0)),
             scroll(
                 dyn_stack(
@@ -438,9 +444,12 @@ impl LinkInterceptorApp {
                                     let candidate = candidate.clone();
                                     let window_status = window_status;
                                     move || {
-                                        window_status.set(
-                                            app.open_candidate_for_url(&candidate, &url.get()),
-                                        );
+                                        let (status, opened) =
+                                            app.open_candidate_for_url(&candidate, &url.get());
+                                        window_status.set(status);
+                                        if opened && close_after_open.get() {
+                                            close_window(window_id);
+                                        }
                                     }
                                 }),
                                 text(candidate_kind_label(candidate.kind).to_owned()),
@@ -781,6 +790,19 @@ impl LinkInterceptorApp {
                 move |checked| {
                     app.config.update(|config| {
                         config.bring_new_windows_to_front = checked;
+                    });
+                    app.persist_config();
+                }
+            }),
+            labeled_checkbox(
+                move || app.config.get().close_intercept_window_after_open,
+                || "拦截窗口默认在打开链接后自动关闭",
+            )
+            .on_update({
+                let app = self.clone();
+                move |checked| {
+                    app.config.update(|config| {
+                        config.close_intercept_window_after_open = checked;
                     });
                     app.persist_config();
                 }

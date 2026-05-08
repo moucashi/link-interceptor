@@ -1,6 +1,6 @@
 use crate::{
     ipc::IpcCommand,
-    models::{Config, CustomApp, DomainRule, FavoriteEntry, HistoryEntry, LaunchRequest},
+    models::{Config, FavoriteEntry, HistoryEntry, LaunchRequest},
     storage::{self, Store},
     windows_integration::{self, RegistrationState},
 };
@@ -16,13 +16,8 @@ use floem::{
 mod intercept_window;
 mod main_window;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tab {
-    History,
-    Favorites,
-    Registration,
-    Settings,
-}
+use intercept_window::InterceptWindow;
+use main_window::MainWindow;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppMode {
@@ -54,25 +49,20 @@ impl AppMode {
 }
 
 #[derive(Clone)]
-pub struct LinkInterceptorApp {
+pub(super) struct AppState {
     store: Option<Store>,
     config: RwSignal<Config>,
     history: RwSignal<Vec<HistoryEntry>>,
     favorites: RwSignal<Vec<FavoriteEntry>>,
-    active_tab: RwSignal<Tab>,
-    history_query: RwSignal<String>,
-    favorites_query: RwSignal<String>,
     status: RwSignal<String>,
     registration_state: RwSignal<RegistrationState>,
+}
+
+#[derive(Clone)]
+pub struct LinkInterceptorApp {
+    state: AppState,
     main_window: RwSignal<Option<WindowId>>,
     next_intercept_id: RwSignal<u64>,
-    clear_history_confirmation: RwSignal<bool>,
-    reset_config_confirmation: RwSignal<bool>,
-    new_custom_name: RwSignal<String>,
-    new_custom_executable: RwSignal<String>,
-    new_custom_args: RwSignal<String>,
-    new_domain_pattern: RwSignal<String>,
-    new_domain_app_name: RwSignal<String>,
 }
 
 impl LinkInterceptorApp {
@@ -101,27 +91,17 @@ impl LinkInterceptorApp {
             }
         }
 
-        let new_custom_app = CustomApp::default();
-        let new_domain_rule = DomainRule::default();
         Self {
-            store,
-            config: RwSignal::new(config),
-            history: RwSignal::new(history),
-            favorites: RwSignal::new(favorites),
-            active_tab: RwSignal::new(Tab::History),
-            history_query: RwSignal::new(String::new()),
-            favorites_query: RwSignal::new(String::new()),
-            status: RwSignal::new(String::new()),
-            registration_state: RwSignal::new(windows_integration::registration_state()),
+            state: AppState {
+                store,
+                config: RwSignal::new(config),
+                history: RwSignal::new(history),
+                favorites: RwSignal::new(favorites),
+                status: RwSignal::new(String::new()),
+                registration_state: RwSignal::new(windows_integration::registration_state()),
+            },
             main_window: RwSignal::new(None),
             next_intercept_id: RwSignal::new(1),
-            clear_history_confirmation: RwSignal::new(false),
-            reset_config_confirmation: RwSignal::new(false),
-            new_custom_name: RwSignal::new(new_custom_app.name),
-            new_custom_executable: RwSignal::new(new_custom_app.executable),
-            new_custom_args: RwSignal::new(new_custom_app.args_template),
-            new_domain_pattern: RwSignal::new(new_domain_rule.pattern),
-            new_domain_app_name: RwSignal::new(new_domain_rule.app_name),
         }
     }
 
@@ -155,10 +135,10 @@ impl LinkInterceptorApp {
             .window(
                 move |window_id| {
                     if let Some(url) = initial_url.clone() {
-                        app_for_window.intercept_window_view(window_id, url)
+                        InterceptWindow::new(app_for_window.clone(), window_id, url).view()
                     } else {
                         app_for_window.main_window.set(Some(window_id));
-                        app_for_window.main_window_view(window_id)
+                        MainWindow::new(app_for_window.clone(), window_id).view()
                     }
                 },
                 Some(config),
@@ -190,45 +170,45 @@ impl LinkInterceptorApp {
     }
 
     fn persist_all(&self) {
-        if let Some(store) = &self.store {
-            if let Err(error) = store.save_config(&self.config.get()) {
-                self.status.set(format!("保存配置失败：{error}"));
+        if let Some(store) = &self.state.store {
+            if let Err(error) = store.save_config(&self.state.config.get()) {
+                self.state.status.set(format!("保存配置失败：{error}"));
                 return;
             }
-            if let Err(error) = store.save_history(&self.history.get()) {
-                self.status.set(format!("保存历史记录失败：{error}"));
+            if let Err(error) = store.save_history(&self.state.history.get()) {
+                self.state.status.set(format!("保存历史记录失败：{error}"));
                 return;
             }
-            if let Err(error) = store.save_favorites(&self.favorites.get()) {
-                self.status.set(format!("保存收藏失败：{error}"));
+            if let Err(error) = store.save_favorites(&self.state.favorites.get()) {
+                self.state.status.set(format!("保存收藏失败：{error}"));
                 return;
             }
-            self.status.set("已保存".to_owned());
+            self.state.status.set("已保存".to_owned());
         } else {
-            self.status.set("存储目录不可用".to_owned());
+            self.state.status.set("存储目录不可用".to_owned());
         }
     }
 
     fn persist_config(&self) {
-        if let Some(store) = &self.store {
-            match store.save_config(&self.config.get()) {
-                Ok(()) => self.status.set("配置已保存".to_owned()),
-                Err(error) => self.status.set(format!("保存配置失败：{error}")),
+        if let Some(store) = &self.state.store {
+            match store.save_config(&self.state.config.get()) {
+                Ok(()) => self.state.status.set("配置已保存".to_owned()),
+                Err(error) => self.state.status.set(format!("保存配置失败：{error}")),
             }
         } else {
-            self.status.set("存储目录不可用".to_owned());
+            self.state.status.set("存储目录不可用".to_owned());
         }
     }
 
     fn persist_history(&self) {
-        if let Some(store) = &self.store {
-            let _ = store.save_history(&self.history.get());
+        if let Some(store) = &self.state.store {
+            let _ = store.save_history(&self.state.history.get());
         }
     }
 
     fn persist_favorites(&self) {
-        if let Some(store) = &self.store {
-            let _ = store.save_favorites(&self.favorites.get());
+        if let Some(store) = &self.state.store {
+            let _ = store.save_favorites(&self.state.favorites.get());
         }
     }
 
@@ -237,7 +217,8 @@ impl LinkInterceptorApp {
         if url.is_empty() {
             return;
         }
-        self.history
+        self.state
+            .history
             .update(|history| storage::record_history(history, &url));
         self.persist_history();
     }
@@ -248,7 +229,7 @@ impl LinkInterceptorApp {
             return "没有可收藏的 URL".to_owned();
         }
         let mut added = false;
-        self.favorites.update(|favorites| {
+        self.state.favorites.update(|favorites| {
             added = storage::toggle_favorite(favorites, url);
         });
         self.persist_favorites();
@@ -285,11 +266,11 @@ impl LinkInterceptorApp {
         new_window(
             move |window_id| {
                 app.main_window.set(Some(window_id));
-                if app.config.get().bring_new_windows_to_front {
+                if app.state.config.get().bring_new_windows_to_front {
                     bring_window_to_front(window_id);
                     focus_window();
                 }
-                app.main_window_view(window_id)
+                MainWindow::new(app.clone(), window_id).view()
             },
             Some(window_config(AppMode::MainWindow)),
         );
@@ -307,11 +288,11 @@ impl LinkInterceptorApp {
         let title = format!("拦截 URL #{id}");
         new_window(
             move |window_id| {
-                if app.config.get().bring_new_windows_to_front {
+                if app.state.config.get().bring_new_windows_to_front {
                     bring_window_to_front(window_id);
                     focus_window();
                 }
-                app.intercept_window_view(window_id, url.clone())
+                InterceptWindow::new(app.clone(), window_id, url.clone()).view()
             },
             Some(
                 window_config(AppMode::InterceptWindow)

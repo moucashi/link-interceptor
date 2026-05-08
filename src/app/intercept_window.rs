@@ -15,21 +15,39 @@ use floem::{
     window::{WindowId, close_window},
 };
 
-impl LinkInterceptorApp {
-    pub(super) fn intercept_window_view(
-        &self,
-        window_id: WindowId,
-        initial_url: String,
-    ) -> floem::AnyView {
+#[derive(Clone)]
+pub(super) struct InterceptWindow {
+    app: LinkInterceptorApp,
+    window_id: WindowId,
+    url: RwSignal<String>,
+    window_status: RwSignal<String>,
+    close_after_open: RwSignal<bool>,
+}
+
+impl InterceptWindow {
+    pub(super) fn new(app: LinkInterceptorApp, window_id: WindowId, initial_url: String) -> Self {
         crate::native_window::set_minimum_content_size(
             window_id,
             AppMode::InterceptWindow.minimum_size(),
         );
-        let url = RwSignal::new(initial_url);
-        let window_status = RwSignal::new(String::new());
-        let close_after_open = RwSignal::new(self.config.get().close_intercept_window_after_open);
-        let app = self.clone();
-        let candidates_app = self.clone();
+        let close_after_open =
+            RwSignal::new(app.state.config.get().close_intercept_window_after_open);
+        Self {
+            app,
+            window_id,
+            url: RwSignal::new(initial_url),
+            window_status: RwSignal::new(String::new()),
+            close_after_open,
+        }
+    }
+
+    pub(super) fn view(self) -> floem::AnyView {
+        let window_id = self.window_id;
+        let url = self.url;
+        let window_status = self.window_status;
+        let close_after_open = self.close_after_open;
+        let app = self.app.clone();
+        let candidates_app = self.app.clone();
         v_stack((
             text("拦截到的 URL").style(|s| s.font_size(22.0)),
             text_input(url)
@@ -44,7 +62,7 @@ impl LinkInterceptorApp {
                     }
                 }),
                 button(label(move || {
-                    if storage::is_favorite(&app.favorites.get(), url.get().trim()) {
+                    if storage::is_favorite(&app.state.favorites.get(), url.get().trim()) {
                         "取消收藏".to_owned()
                     } else {
                         "收藏".to_owned()
@@ -73,7 +91,9 @@ impl LinkInterceptorApp {
             text("打开方式").style(|s| s.font_size(20.0)),
             scroll(
                 dyn_stack(
-                    move || candidates::build_candidates(&candidates_app.config.get(), &url.get()),
+                    move || {
+                        candidates::build_candidates(&candidates_app.state.config.get(), &url.get())
+                    },
                     |candidate| {
                         (
                             candidate.name.clone(),
@@ -82,7 +102,7 @@ impl LinkInterceptorApp {
                         )
                     },
                     {
-                        let app = self.clone();
+                        let app = app.clone();
                         move |candidate: OpenCandidate| {
                             let name = candidate.name.clone();
                             let enabled = candidate.available;

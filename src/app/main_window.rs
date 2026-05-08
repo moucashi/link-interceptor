@@ -1,4 +1,4 @@
-use super::{LinkInterceptorApp, Tab};
+use super::LinkInterceptorApp;
 use crate::{
     models::{Config, CustomApp, DomainRule, FavoriteEntry, HistoryEntry},
     windows_integration::{self, RegistrationState},
@@ -16,8 +16,52 @@ use floem::{
     window::{WindowId, close_window},
 };
 
-impl LinkInterceptorApp {
-    pub(super) fn main_window_view(&self, window_id: WindowId) -> floem::AnyView {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Tab {
+    History,
+    Favorites,
+    Registration,
+    Settings,
+}
+
+#[derive(Clone)]
+pub(super) struct MainWindow {
+    app: LinkInterceptorApp,
+    window_id: WindowId,
+    active_tab: RwSignal<Tab>,
+    history_query: RwSignal<String>,
+    favorites_query: RwSignal<String>,
+    clear_history_confirmation: RwSignal<bool>,
+    reset_config_confirmation: RwSignal<bool>,
+    new_custom_name: RwSignal<String>,
+    new_custom_executable: RwSignal<String>,
+    new_custom_args: RwSignal<String>,
+    new_domain_pattern: RwSignal<String>,
+    new_domain_app_name: RwSignal<String>,
+}
+
+impl MainWindow {
+    pub(super) fn new(app: LinkInterceptorApp, window_id: WindowId) -> Self {
+        let new_custom_app = CustomApp::default();
+        let new_domain_rule = DomainRule::default();
+        Self {
+            app,
+            window_id,
+            active_tab: RwSignal::new(Tab::History),
+            history_query: RwSignal::new(String::new()),
+            favorites_query: RwSignal::new(String::new()),
+            clear_history_confirmation: RwSignal::new(false),
+            reset_config_confirmation: RwSignal::new(false),
+            new_custom_name: RwSignal::new(new_custom_app.name),
+            new_custom_executable: RwSignal::new(new_custom_app.executable),
+            new_custom_args: RwSignal::new(new_custom_app.args_template),
+            new_domain_pattern: RwSignal::new(new_domain_rule.pattern),
+            new_domain_app_name: RwSignal::new(new_domain_rule.app_name),
+        }
+    }
+
+    pub(super) fn view(self) -> floem::AnyView {
+        let window_id = self.window_id;
         let app = self.clone();
         let tab = self.active_tab;
         let content_app = self.clone();
@@ -42,7 +86,7 @@ impl LinkInterceptorApp {
                     .min_height(0.0)
             }),
             label(move || {
-                let status = app.status.get();
+                let status = app.app.state.status.get();
                 if status.is_empty() {
                     "就绪".to_owned()
                 } else {
@@ -61,8 +105,8 @@ impl LinkInterceptorApp {
         .on_cleanup({
             let app = self.clone();
             move || {
-                if app.main_window.get() == Some(window_id) {
-                    app.main_window.set(None);
+                if app.app.main_window.get() == Some(window_id) {
+                    app.app.main_window.set(None);
                 }
             }
         })
@@ -95,10 +139,10 @@ impl LinkInterceptorApp {
                         button("确认清空").action({
                             let app = app.clone();
                             move || {
-                                app.history.set(Vec::new());
-                                app.persist_history();
+                                app.app.state.history.set(Vec::new());
+                                app.app.persist_history();
                                 app.clear_history_confirmation.set(false);
-                                app.status.set("历史记录已清空".to_owned());
+                                app.app.state.status.set("历史记录已清空".to_owned());
                             }
                         }),
                     ))
@@ -113,6 +157,8 @@ impl LinkInterceptorApp {
                     move || {
                         let query = rows_app.history_query.get().to_ascii_lowercase();
                         rows_app
+                            .app
+                            .state
                             .history
                             .get()
                             .into_iter()
@@ -132,10 +178,10 @@ impl LinkInterceptorApp {
                                         let app = app.clone();
                                         let url = url.clone();
                                         move || {
-                                            app.history.update(|history| {
+                                            app.app.state.history.update(|history| {
                                                 history.retain(|item| item.url != url);
                                             });
-                                            app.persist_history();
+                                            app.app.persist_history();
                                         }
                                     })
                                     .style(|s| s.flex_shrink(0.0)),
@@ -143,7 +189,7 @@ impl LinkInterceptorApp {
                                     .action({
                                         let app = app.clone();
                                         let url = url.clone();
-                                        move || app.open_intercept_window(url.clone(), false)
+                                        move || app.app.open_intercept_window(url.clone(), false)
                                     })
                                     .style(|s| s.flex_shrink(0.0)),
                                 v_stack((
@@ -209,6 +255,8 @@ impl LinkInterceptorApp {
                     move || {
                         let query = rows_app.favorites_query.get().to_ascii_lowercase();
                         rows_app
+                            .app
+                            .state
                             .favorites
                             .get()
                             .into_iter()
@@ -228,10 +276,10 @@ impl LinkInterceptorApp {
                                         let app = app.clone();
                                         let url = url.clone();
                                         move || {
-                                            app.favorites.update(|favorites| {
+                                            app.app.state.favorites.update(|favorites| {
                                                 favorites.retain(|item| item.url != url);
                                             });
-                                            app.persist_favorites();
+                                            app.app.persist_favorites();
                                         }
                                     })
                                     .style(|s| s.flex_shrink(0.0)),
@@ -239,7 +287,7 @@ impl LinkInterceptorApp {
                                     .action({
                                         let app = app.clone();
                                         let url = url.clone();
-                                        move || app.open_intercept_window(url.clone(), false)
+                                        move || app.app.open_intercept_window(url.clone(), false)
                                     })
                                     .style(|s| s.flex_shrink(0.0)),
                                 v_stack((
@@ -295,7 +343,9 @@ impl LinkInterceptorApp {
         create_effect({
             let app = app.clone();
             move |_| {
-                app.registration_state
+                app.app
+                    .state
+                    .registration_state
                     .set(windows_integration::registration_state())
             }
         });
@@ -304,7 +354,7 @@ impl LinkInterceptorApp {
             text("注册状态").style(|s| s.font_size(22.0)),
             label({
                 let app = app.clone();
-                move || match app.registration_state.get() {
+                move || match app.app.state.registration_state.get() {
                     RegistrationState::NotRegistered => "状态：尚未注册为浏览器候选项".to_owned(),
                     RegistrationState::Registered => {
                         "状态：已注册，但 Windows 可能尚未将其设为默认".to_owned()
@@ -325,30 +375,36 @@ impl LinkInterceptorApp {
                     let app = app.clone();
                     move || match windows_integration::register_application() {
                         Ok(()) => {
-                            app.registration_state
+                            app.app
+                                .state
+                                .registration_state
                                 .set(windows_integration::registration_state());
-                            app.status
+                            app.app
+                                .state
+                                .status
                                 .set("已注册。请在 Windows 设置中将其设为默认应用。".to_owned());
                         }
-                        Err(error) => app.status.set(format!("注册失败：{error}")),
+                        Err(error) => app.app.state.status.set(format!("注册失败：{error}")),
                     }
                 }),
                 button("反注册").action({
                     let app = app.clone();
                     move || match windows_integration::unregister_application() {
                         Ok(()) => {
-                            app.registration_state
+                            app.app
+                                .state
+                                .registration_state
                                 .set(windows_integration::registration_state());
-                            app.status.set("已反注册".to_owned());
+                            app.app.state.status.set("已反注册".to_owned());
                         }
-                        Err(error) => app.status.set(format!("反注册失败：{error}")),
+                        Err(error) => app.app.state.status.set(format!("反注册失败：{error}")),
                     }
                 }),
                 button("打开默认应用设置").action({
                     let app = app.clone();
                     move || match windows_integration::open_default_apps_settings() {
-                        Ok(()) => app.status.set("已打开 Windows 设置".to_owned()),
-                        Err(error) => app.status.set(format!("打开设置失败：{error}")),
+                        Ok(()) => app.app.state.status.set("已打开 Windows 设置".to_owned()),
+                        Err(error) => app.app.state.status.set(format!("打开设置失败：{error}")),
                     }
                 }),
             ))
@@ -362,29 +418,29 @@ impl LinkInterceptorApp {
         v_stack((
             text("窗口").style(|s| s.font_size(22.0)),
             labeled_checkbox(
-                move || app.config.get().bring_new_windows_to_front,
+                move || app.app.state.config.get().bring_new_windows_to_front,
                 || "打开新窗口时自动置顶",
             )
             .on_update({
                 let app = self.clone();
                 move |checked| {
-                    app.config.update(|config| {
+                    app.app.state.config.update(|config| {
                         config.bring_new_windows_to_front = checked;
                     });
-                    app.persist_config();
+                    app.app.persist_config();
                 }
             }),
             labeled_checkbox(
-                move || app.config.get().close_intercept_window_after_open,
+                move || app.app.state.config.get().close_intercept_window_after_open,
                 || "拦截窗口默认在打开链接后自动关闭",
             )
             .on_update({
                 let app = self.clone();
                 move |checked| {
-                    app.config.update(|config| {
+                    app.app.state.config.update(|config| {
                         config.close_intercept_window_after_open = checked;
                     });
-                    app.persist_config();
+                    app.app.persist_config();
                 }
             }),
             text("自定义应用").style(|s| s.font_size(20.0)),
@@ -404,7 +460,7 @@ impl LinkInterceptorApp {
                         if name.trim().is_empty() {
                             return;
                         }
-                        app.config.update(|config| {
+                        app.app.state.config.update(|config| {
                             config.custom_apps.push(CustomApp {
                                 name,
                                 executable: app.new_custom_executable.get(),
@@ -415,7 +471,7 @@ impl LinkInterceptorApp {
                         app.new_custom_name.set(default.name);
                         app.new_custom_executable.set(default.executable);
                         app.new_custom_args.set(default.args_template);
-                        app.persist_config();
+                        app.app.persist_config();
                     }
                 }),
             ))
@@ -435,7 +491,7 @@ impl LinkInterceptorApp {
                         if pattern.trim().is_empty() {
                             return;
                         }
-                        app.config.update(|config| {
+                        app.app.state.config.update(|config| {
                             config.domain_rules.push(DomainRule {
                                 pattern,
                                 app_name: app.new_domain_app_name.get(),
@@ -444,7 +500,7 @@ impl LinkInterceptorApp {
                         let default = DomainRule::default();
                         app.new_domain_pattern.set(default.pattern);
                         app.new_domain_app_name.set(default.app_name);
-                        app.persist_config();
+                        app.app.persist_config();
                     }
                 }),
             ))
@@ -452,7 +508,7 @@ impl LinkInterceptorApp {
             h_stack((
                 button("保存设置").action({
                     let app = self.clone();
-                    move || app.persist_all()
+                    move || app.app.persist_all()
                 }),
                 button("恢复默认设置").action({
                     let app = self.clone();
@@ -473,7 +529,7 @@ impl LinkInterceptorApp {
                             button("确认恢复").action({
                                 let app = app.clone();
                                 move || {
-                                    app.config.set(Config::default());
+                                    app.app.state.config.set(Config::default());
                                     let default_app = CustomApp::default();
                                     let default_rule = DomainRule::default();
                                     app.new_custom_name.set(default_app.name);
@@ -481,9 +537,9 @@ impl LinkInterceptorApp {
                                     app.new_custom_args.set(default_app.args_template);
                                     app.new_domain_pattern.set(default_rule.pattern);
                                     app.new_domain_app_name.set(default_rule.app_name);
-                                    app.persist_config();
+                                    app.app.persist_config();
                                     app.reset_config_confirmation.set(false);
-                                    app.status.set("已恢复默认设置".to_owned());
+                                    app.app.state.status.set("已恢复默认设置".to_owned());
                                 }
                             }),
                         ))
@@ -502,7 +558,9 @@ impl LinkInterceptorApp {
         let app = self.clone();
         dyn_stack(
             move || {
-                app.config
+                app.app
+                    .state
+                    .config
                     .get()
                     .custom_apps
                     .into_iter()
@@ -526,25 +584,25 @@ impl LinkInterceptorApp {
                         button("保存").action({
                             let state = state.clone();
                             move || {
-                                state.config.update(|config| {
+                                state.app.state.config.update(|config| {
                                     if let Some(app) = config.custom_apps.get_mut(index) {
                                         app.name = name.get();
                                         app.executable = executable.get();
                                         app.args_template = args_template.get();
                                     }
                                 });
-                                state.persist_config();
+                                state.app.persist_config();
                             }
                         }),
                         button("移除").action({
                             let state = state.clone();
                             move || {
-                                state.config.update(|config| {
+                                state.app.state.config.update(|config| {
                                     if index < config.custom_apps.len() {
                                         config.custom_apps.remove(index);
                                     }
                                 });
-                                state.persist_config();
+                                state.app.persist_config();
                             }
                         }),
                     ))
@@ -559,7 +617,9 @@ impl LinkInterceptorApp {
         let app = self.clone();
         dyn_stack(
             move || {
-                app.config
+                app.app
+                    .state
+                    .config
                     .get()
                     .domain_rules
                     .into_iter()
@@ -580,24 +640,24 @@ impl LinkInterceptorApp {
                         button("保存").action({
                             let state = state.clone();
                             move || {
-                                state.config.update(|config| {
+                                state.app.state.config.update(|config| {
                                     if let Some(rule) = config.domain_rules.get_mut(index) {
                                         rule.pattern = pattern.get();
                                         rule.app_name = app_name.get();
                                     }
                                 });
-                                state.persist_config();
+                                state.app.persist_config();
                             }
                         }),
                         button("移除").action({
                             let state = state.clone();
                             move || {
-                                state.config.update(|config| {
+                                state.app.state.config.update(|config| {
                                     if index < config.domain_rules.len() {
                                         config.domain_rules.remove(index);
                                     }
                                 });
-                                state.persist_config();
+                                state.app.persist_config();
                             }
                         }),
                     ))

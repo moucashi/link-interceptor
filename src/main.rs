@@ -6,6 +6,7 @@ mod ipc;
 mod models;
 mod native_window;
 mod storage;
+mod ui_style;
 mod windows_integration;
 
 use app::LinkInterceptorApp;

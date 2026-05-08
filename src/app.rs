@@ -149,16 +149,21 @@ impl LinkInterceptorApp {
         }
 
         let app_for_window = app.clone();
-        let config = if initial_url.is_some() {
-            window_config(mode).title("拦截 URL #1")
+        let initial_window_title = if initial_url.is_some() {
+            "拦截 URL #1".to_owned()
         } else {
-            window_config(mode)
+            mode.window_title().to_owned()
         };
+        let config = window_config(mode).title(initial_window_title.clone());
         floem::Application::new()
             .window(
                 move |window_id| {
                     if let Some(url) = initial_url.clone() {
-                        app_for_window.intercept_window_view(window_id, url)
+                        app_for_window.intercept_window_view(
+                            window_id,
+                            url,
+                            initial_window_title.clone(),
+                        )
                     } else {
                         app_for_window.main_window.set(Some(window_id));
                         app_for_window.main_window_view(window_id)
@@ -307,17 +312,19 @@ impl LinkInterceptorApp {
         let app = self.clone();
         let id = self.next_intercept_id.get();
         self.next_intercept_id.set(id + 1);
+        let title = format!("拦截 URL #{id}");
+        let window_title = title.clone();
         new_window(
             move |window_id| {
                 if app.config.get().bring_new_windows_to_front {
                     bring_window_to_front(window_id);
                     focus_window();
                 }
-                app.intercept_window_view(window_id, url.clone())
+                app.intercept_window_view(window_id, url.clone(), window_title.clone())
             },
             Some(
                 window_config(AppMode::InterceptWindow)
-                    .title(format!("拦截 URL #{id}"))
+                    .title(title)
                     .size(AppMode::InterceptWindow.initial_size()),
             ),
         );
@@ -376,7 +383,16 @@ impl LinkInterceptorApp {
         .into_any()
     }
 
-    fn intercept_window_view(&self, window_id: WindowId, initial_url: String) -> floem::AnyView {
+    fn intercept_window_view(
+        &self,
+        window_id: WindowId,
+        initial_url: String,
+        window_title: String,
+    ) -> floem::AnyView {
+        crate::native_window::set_minimum_content_size(
+            &window_title,
+            AppMode::InterceptWindow.minimum_size(),
+        );
         let url = RwSignal::new(initial_url);
         let window_status = RwSignal::new(String::new());
         let app = self.clone();
@@ -468,15 +484,6 @@ impl LinkInterceptorApp {
                 close_window(window_id);
             },
         )
-        .on_resize(move |rect| {
-            let minimum_size = AppMode::InterceptWindow.minimum_size();
-            if rect.width() < minimum_size.width || rect.height() < minimum_size.height {
-                window_id.set_content_size(Size::new(
-                    rect.width().max(minimum_size.width),
-                    rect.height().max(minimum_size.height),
-                ));
-            }
-        })
         .style(|s| s.size_full().padding(14).gap(10).flex_col())
         .into_any()
     }

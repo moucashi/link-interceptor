@@ -4,6 +4,7 @@ mod app;
 mod candidates;
 mod ipc;
 mod models;
+mod native_window;
 mod storage;
 mod windows_integration;
 

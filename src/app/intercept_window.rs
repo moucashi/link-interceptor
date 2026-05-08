@@ -3,6 +3,7 @@ use crate::{
     candidates,
     models::{CandidateKind, OpenCandidate},
     storage,
+    ui_style::interactive_cursor_style,
 };
 use floem::{
     Clipboard, IntoView,
@@ -145,7 +146,7 @@ impl InterceptWindow {
                 close_window(window_id);
             },
         )
-        .style(|s| s.size_full().padding(14).gap(10).flex_col())
+        .style(|s| interactive_cursor_style(s.size_full().padding(14).gap(10).flex_col()))
         .into_any()
     }
 }

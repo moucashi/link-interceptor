@@ -1,6 +1,7 @@
 use super::LinkInterceptorApp;
 use crate::{
     models::{Config, CustomApp, DomainRule, FavoriteEntry, HistoryEntry},
+    ui_style::interactive_cursor_style,
     windows_integration::{self, RegistrationState},
 };
 use floem::{
@@ -110,7 +111,7 @@ impl MainWindow {
                 }
             }
         })
-        .style(|s| s.size_full().flex_col())
+        .style(|s| interactive_cursor_style(s.size_full().flex_col()))
         .into_any()
     }
 

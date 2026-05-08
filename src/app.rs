@@ -7,11 +7,12 @@ use crate::{
 };
 use floem::{
     Clipboard, IntoView, Urgency, WindowIdExt,
+    action::focus_window,
     ext_event::create_signal_from_channel,
     keyboard::Key,
     peniko::{Color, kurbo::Size},
     prelude::*,
-    reactive::{RwSignal, SignalGet, SignalUpdate, create_effect},
+    reactive::{RwSignal, SignalGet, SignalUpdate, create_effect, untrack},
     views::{
         button, dyn_stack, dyn_view, h_stack, label, labeled_checkbox, scroll, text, text_input,
         v_stack,
@@ -176,10 +177,10 @@ impl LinkInterceptorApp {
         let app = self.clone();
         create_effect(move |_| {
             if let Some(command) = command_signal.get() {
-                match command {
+                untrack(|| match command {
                     IpcCommand::ShowMain => app.show_or_create_main_window(),
                     IpcCommand::OpenIntercept { url } => app.open_intercept_window(url, true),
-                }
+                });
             }
         });
     }
@@ -282,6 +283,7 @@ impl LinkInterceptorApp {
                 app.main_window.set(Some(window_id));
                 if app.config.get().bring_new_windows_to_front {
                     bring_window_to_front(window_id);
+                    focus_window();
                 }
                 app.main_window_view(window_id)
             },
@@ -302,6 +304,7 @@ impl LinkInterceptorApp {
             move |window_id| {
                 if app.config.get().bring_new_windows_to_front {
                     bring_window_to_front(window_id);
+                    focus_window();
                 }
                 app.intercept_window_view(window_id, url.clone())
             },
@@ -434,7 +437,6 @@ impl LinkInterceptorApp {
                                     }
                                 }),
                                 text(candidate_kind_label(candidate.kind).to_owned()),
-                                text(candidate.reason),
                             ))
                             .style(|s| s.gap(8).items_center())
                         }

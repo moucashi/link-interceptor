@@ -1,20 +1,16 @@
-use floem::peniko::kurbo::Size;
+use floem::{peniko::kurbo::Size, window::WindowId};
 
 #[cfg(windows)]
-use windows::{
-    Win32::{
-        Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
-        UI::{
-            HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow},
-            Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
-            WindowsAndMessaging::{
-                EnumWindows, GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, GetWindowTextLengthW,
-                GetWindowTextW, GetWindowThreadProcessId, MINMAXINFO, WINDOW_EX_STYLE,
-                WINDOW_STYLE, WM_GETMINMAXINFO, WM_NCDESTROY,
-            },
+use windows::Win32::{
+    Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM},
+    UI::{
+        HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow},
+        Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
+        WindowsAndMessaging::{
+            GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, MINMAXINFO, WINDOW_EX_STYLE, WINDOW_STYLE,
+            WM_GETMINMAXINFO, WM_NCDESTROY,
         },
     },
-    core::BOOL,
 };
 
 #[cfg(windows)]
@@ -26,23 +22,13 @@ struct MinimumContentSize {
     height: f64,
 }
 
-#[cfg(windows)]
-struct WindowSearchState<'a> {
-    title: &'a str,
-    process_id: u32,
-    hwnd: Option<HWND>,
-}
-
-pub fn set_minimum_content_size(window_title: &str, minimum_size: Size) {
-    set_minimum_content_size_impl(window_title, minimum_size);
+pub fn set_minimum_content_size(window_id: WindowId, minimum_size: Size) {
+    set_minimum_content_size_impl(window_id, minimum_size);
 }
 
 #[cfg(windows)]
-fn set_minimum_content_size_impl(window_title: &str, minimum_size: Size) {
-    let Some(hwnd) = find_current_process_window(window_title) else {
-        return;
-    };
-
+fn set_minimum_content_size_impl(window_id: WindowId, minimum_size: Size) {
+    let hwnd = window_id_to_hwnd(window_id);
     let data = Box::new(MinimumContentSize {
         width: minimum_size.width,
         height: minimum_size.height,
@@ -64,51 +50,11 @@ fn set_minimum_content_size_impl(window_title: &str, minimum_size: Size) {
 }
 
 #[cfg(not(windows))]
-fn set_minimum_content_size_impl(_window_title: &str, _minimum_size: Size) {}
+fn set_minimum_content_size_impl(_window_id: WindowId, _minimum_size: Size) {}
 
 #[cfg(windows)]
-fn find_current_process_window(window_title: &str) -> Option<HWND> {
-    let mut state = WindowSearchState {
-        title: window_title,
-        process_id: std::process::id(),
-        hwnd: None,
-    };
-
-    unsafe {
-        let _ = EnumWindows(
-            Some(enum_windows_for_title),
-            LPARAM((&mut state as *mut WindowSearchState<'_>) as isize),
-        );
-    }
-    state.hwnd
-}
-
-#[cfg(windows)]
-unsafe extern "system" fn enum_windows_for_title(hwnd: HWND, lparam: LPARAM) -> BOOL {
-    let state = unsafe { &mut *(lparam.0 as *mut WindowSearchState<'_>) };
-
-    let mut process_id = 0;
-    unsafe {
-        GetWindowThreadProcessId(hwnd, Some(&mut process_id));
-    }
-    if process_id == state.process_id && window_text(hwnd) == state.title {
-        state.hwnd = Some(hwnd);
-        return BOOL(0);
-    }
-
-    BOOL(1)
-}
-
-#[cfg(windows)]
-fn window_text(hwnd: HWND) -> String {
-    let length = unsafe { GetWindowTextLengthW(hwnd) };
-    if length <= 0 {
-        return String::new();
-    }
-
-    let mut buffer = vec![0; length as usize + 1];
-    let copied = unsafe { GetWindowTextW(hwnd, &mut buffer) };
-    String::from_utf16_lossy(&buffer[..copied as usize])
+fn window_id_to_hwnd(window_id: WindowId) -> HWND {
+    HWND(u64::from(window_id) as usize as *mut core::ffi::c_void)
 }
 
 #[cfg(windows)]

@@ -20,10 +20,9 @@ impl LinkInterceptorApp {
         &self,
         window_id: WindowId,
         initial_url: String,
-        window_title: String,
     ) -> floem::AnyView {
         crate::native_window::set_minimum_content_size(
-            &window_title,
+            window_id,
             AppMode::InterceptWindow.minimum_size(),
         );
         let url = RwSignal::new(initial_url);

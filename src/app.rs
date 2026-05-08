@@ -155,11 +155,7 @@ impl LinkInterceptorApp {
             .window(
                 move |window_id| {
                     if let Some(url) = initial_url.clone() {
-                        app_for_window.intercept_window_view(
-                            window_id,
-                            url,
-                            initial_window_title.clone(),
-                        )
+                        app_for_window.intercept_window_view(window_id, url)
                     } else {
                         app_for_window.main_window.set(Some(window_id));
                         app_for_window.main_window_view(window_id)
@@ -309,14 +305,13 @@ impl LinkInterceptorApp {
         let id = self.next_intercept_id.get();
         self.next_intercept_id.set(id + 1);
         let title = format!("拦截 URL #{id}");
-        let window_title = title.clone();
         new_window(
             move |window_id| {
                 if app.config.get().bring_new_windows_to_front {
                     bring_window_to_front(window_id);
                     focus_window();
                 }
-                app.intercept_window_view(window_id, url.clone(), window_title.clone())
+                app.intercept_window_view(window_id, url.clone())
             },
             Some(
                 window_config(AppMode::InterceptWindow)

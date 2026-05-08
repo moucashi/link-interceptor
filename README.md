@@ -1,6 +1,6 @@
 # Link Interceptor
 
-一个使用 Rust 和 `eframe/egui` 编写的 Windows 桌面 URL 拦截器。
+一个使用 Rust 和 `floem` 编写的 Windows 桌面 URL 拦截器。
 
 此应用可以注册为 `HTTP` 和 `HTTPS` 的默认浏览器候选项。当其他程序通过系统浏览器打开 URL 时，Windows 可以将该 URL 作为第一个命令行参数传递给此应用启动。随后，应用会允许你编辑、复制、收藏、保存该 URL，并将其转交给已安装的浏览器或其他已注册/自定义的处理程序打开。
 

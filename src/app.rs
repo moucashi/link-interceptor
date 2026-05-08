@@ -5,8 +5,16 @@ use crate::{
     storage::{self, Store},
     windows_integration::{self, RegistrationState},
 };
-use eframe::egui;
-use std::sync::mpsc::Receiver;
+use floem::{
+    Clipboard, IntoView, Urgency, WindowIdExt,
+    ext_event::create_signal_from_channel,
+    keyboard::Key,
+    peniko::{Color, kurbo::Size},
+    prelude::*,
+    reactive::{RwSignal, SignalGet, SignalUpdate, create_effect},
+    views::{button, dyn_stack, dyn_view, h_stack, label, scroll, text, text_input, v_stack},
+    window::{WindowConfig, WindowId, close_window, new_window},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -30,70 +38,38 @@ impl AppMode {
         }
     }
 
-    pub fn initial_size(self) -> [f32; 2] {
+    pub fn initial_size(self) -> Size {
         match self {
-            Self::MainWindow => [1024.0, 720.0],
-            Self::InterceptWindow => [860.0, 560.0],
-        }
-    }
-
-    pub fn min_size(self) -> [f32; 2] {
-        match self {
-            Self::MainWindow => [760.0, 520.0],
-            Self::InterceptWindow => [640.0, 420.0],
+            Self::MainWindow => Size::new(1024.0, 720.0),
+            Self::InterceptWindow => Size::new(860.0, 560.0),
         }
     }
 }
 
+#[derive(Clone)]
 pub struct LinkInterceptorApp {
-    ipc_receiver: Option<Receiver<IpcCommand>>,
-    next_intercept_id: u64,
-    root_window: RootWindow,
-    intercept_windows: Vec<InterceptWindow>,
-    secondary_main_open: bool,
-    secondary_main_bring_to_front: bool,
     store: Option<Store>,
-    config: Config,
-    history: Vec<HistoryEntry>,
-    favorites: Vec<FavoriteEntry>,
-    active_tab: Tab,
-    history_query: String,
-    clear_history_confirmation: Option<ClearHistoryConfirmation>,
-    reset_config_confirmation: Option<ResetConfigConfirmation>,
-    favorites_query: String,
-    status: String,
-    registration_state: RegistrationState,
-    new_custom_app: CustomApp,
-    new_domain_rule: DomainRule,
-}
-
-enum RootWindow {
-    Main,
-    Intercept(InterceptWindow),
-}
-
-struct InterceptWindow {
-    id: u64,
-    url: String,
-    status: String,
-    bring_to_front: bool,
-}
-
-struct ClearHistoryConfirmation {
-    target_pos: egui::Pos2,
-    popup_pos: egui::Pos2,
-}
-
-struct ResetConfigConfirmation {
-    target_pos: egui::Pos2,
-    popup_pos: egui::Pos2,
+    config: RwSignal<Config>,
+    history: RwSignal<Vec<HistoryEntry>>,
+    favorites: RwSignal<Vec<FavoriteEntry>>,
+    active_tab: RwSignal<Tab>,
+    history_query: RwSignal<String>,
+    favorites_query: RwSignal<String>,
+    status: RwSignal<String>,
+    registration_state: RwSignal<RegistrationState>,
+    main_window: RwSignal<Option<WindowId>>,
+    next_intercept_id: RwSignal<u64>,
+    clear_history_confirmation: RwSignal<bool>,
+    reset_config_confirmation: RwSignal<bool>,
+    new_custom_name: RwSignal<String>,
+    new_custom_executable: RwSignal<String>,
+    new_custom_args: RwSignal<String>,
+    new_domain_pattern: RwSignal<String>,
+    new_domain_app_name: RwSignal<String>,
 }
 
 impl LinkInterceptorApp {
-    pub fn new(
-        launch_request: Option<LaunchRequest>,
-        ipc_receiver: Option<Receiver<IpcCommand>>,
-    ) -> Self {
+    pub fn new(launch_request: Option<LaunchRequest>) -> Self {
         let store = Store::new().ok();
         let config = store
             .as_ref()
@@ -109,109 +85,165 @@ impl LinkInterceptorApp {
             .and_then(|store| store.load_favorites().ok())
             .unwrap_or_default();
 
+        if let Some(request) = launch_request.as_ref() {
+            if !request.raw_url.trim().is_empty() {
+                storage::record_history(&mut history, request.raw_url.trim());
+                if let Some(store) = &store {
+                    let _ = store.save_history(&history);
+                }
+            }
+        }
+
+        let new_custom_app = CustomApp::default();
+        let new_domain_rule = DomainRule::default();
+        Self {
+            store,
+            config: RwSignal::new(config),
+            history: RwSignal::new(history),
+            favorites: RwSignal::new(favorites),
+            active_tab: RwSignal::new(Tab::History),
+            history_query: RwSignal::new(String::new()),
+            favorites_query: RwSignal::new(String::new()),
+            status: RwSignal::new(String::new()),
+            registration_state: RwSignal::new(windows_integration::registration_state()),
+            main_window: RwSignal::new(None),
+            next_intercept_id: RwSignal::new(1),
+            clear_history_confirmation: RwSignal::new(false),
+            reset_config_confirmation: RwSignal::new(false),
+            new_custom_name: RwSignal::new(new_custom_app.name),
+            new_custom_executable: RwSignal::new(new_custom_app.executable),
+            new_custom_args: RwSignal::new(new_custom_app.args_template),
+            new_domain_pattern: RwSignal::new(new_domain_rule.pattern),
+            new_domain_app_name: RwSignal::new(new_domain_rule.app_name),
+        }
+    }
+
+    pub fn run(
+        launch_request: Option<LaunchRequest>,
+        ipc_receiver: Option<std::sync::mpsc::Receiver<IpcCommand>>,
+    ) {
         let initial_url = launch_request
             .as_ref()
-            .map(|request| request.raw_url.clone())
-            .unwrap_or_default();
-        if !initial_url.is_empty() {
-            storage::record_history(&mut history, &initial_url);
-            if let Some(store) = &store {
-                let _ = store.save_history(&history);
-            }
-        }
-        let (root_window, next_intercept_id) = if initial_url.is_empty() {
-            (RootWindow::Main, 1)
+            .map(|request| request.raw_url.clone());
+        let app = Self::new(launch_request);
+        app.start_ipc_bridge(ipc_receiver);
+
+        let mode = if initial_url.is_some() {
+            AppMode::InterceptWindow
         } else {
-            let bring_new_windows_to_front = config.bring_new_windows_to_front;
-            (
-                RootWindow::Intercept(InterceptWindow {
-                    id: 1,
-                    url: initial_url,
-                    status: String::new(),
-                    bring_to_front: bring_new_windows_to_front,
-                }),
-                2,
-            )
+            AppMode::MainWindow
         };
-
-        Self {
-            ipc_receiver,
-            next_intercept_id,
-            root_window,
-            intercept_windows: Vec::new(),
-            secondary_main_open: false,
-            secondary_main_bring_to_front: false,
-            store,
-            config,
-            history,
-            favorites,
-            active_tab: Tab::History,
-            history_query: String::new(),
-            clear_history_confirmation: None,
-            reset_config_confirmation: None,
-            favorites_query: String::new(),
-            status: String::new(),
-            registration_state: windows_integration::registration_state(),
-            new_custom_app: CustomApp::default(),
-            new_domain_rule: DomainRule::default(),
+        if initial_url.is_some() {
+            app.next_intercept_id.set(2);
         }
-    }
 
-    fn persist_all(&mut self) {
-        if let Some(store) = &self.store {
-            if let Err(error) = store.save_config(&self.config) {
-                self.status = format!("保存配置失败：{error}");
-                return;
-            }
-            if let Err(error) = store.save_history(&self.history) {
-                self.status = format!("保存历史记录失败：{error}");
-                return;
-            }
-            if let Err(error) = store.save_favorites(&self.favorites) {
-                self.status = format!("保存收藏失败：{error}");
-                return;
-            }
-            self.status = "已保存".to_owned();
+        let app_for_window = app.clone();
+        let config = if initial_url.is_some() {
+            window_config(mode).title("拦截 URL #1")
         } else {
-            self.status = "存储目录不可用".to_owned();
-        }
+            window_config(mode)
+        };
+        floem::Application::new()
+            .window(
+                move |window_id| {
+                    if let Some(url) = initial_url.clone() {
+                        app_for_window.intercept_window_view(window_id, url)
+                    } else {
+                        app_for_window.main_window.set(Some(window_id));
+                        app_for_window.main_window_view(window_id)
+                    }
+                },
+                Some(config),
+            )
+            .run();
     }
 
-    fn persist_config(&mut self) {
-        if let Some(store) = &self.store {
-            match store.save_config(&self.config) {
-                Ok(()) => self.status = "配置已保存".to_owned(),
-                Err(error) => self.status = format!("保存配置失败：{error}"),
+    fn start_ipc_bridge(&self, receiver: Option<std::sync::mpsc::Receiver<IpcCommand>>) {
+        let Some(receiver) = receiver else {
+            return;
+        };
+        let (sender, floem_receiver) = crossbeam_channel::unbounded();
+        std::thread::spawn(move || {
+            while let Ok(command) = receiver.recv() {
+                let _ = sender.send(command);
             }
-        }
-    }
-
-    fn open_intercept_window(&mut self, url: String, record_history: bool) {
-        let url = url.trim().to_owned();
-        if record_history && !url.is_empty() {
-            storage::record_history(&mut self.history, &url);
-            if let Some(store) = &self.store {
-                let _ = store.save_history(&self.history);
-            }
-        }
-        self.intercept_windows.push(InterceptWindow {
-            id: self.next_intercept_id,
-            url,
-            status: String::new(),
-            bring_to_front: self.config.bring_new_windows_to_front,
         });
-        self.next_intercept_id += 1;
+
+        let command_signal = create_signal_from_channel(floem_receiver);
+        let app = self.clone();
+        create_effect(move |_| {
+            if let Some(command) = command_signal.get() {
+                match command {
+                    IpcCommand::ShowMain => app.show_or_create_main_window(),
+                    IpcCommand::OpenIntercept { url } => app.open_intercept_window(url, true),
+                }
+            }
+        });
     }
 
-    fn toggle_favorite_url(&mut self, url: &str) -> String {
+    fn persist_all(&self) {
+        if let Some(store) = &self.store {
+            if let Err(error) = store.save_config(&self.config.get()) {
+                self.status.set(format!("保存配置失败：{error}"));
+                return;
+            }
+            if let Err(error) = store.save_history(&self.history.get()) {
+                self.status.set(format!("保存历史记录失败：{error}"));
+                return;
+            }
+            if let Err(error) = store.save_favorites(&self.favorites.get()) {
+                self.status.set(format!("保存收藏失败：{error}"));
+                return;
+            }
+            self.status.set("已保存".to_owned());
+        } else {
+            self.status.set("存储目录不可用".to_owned());
+        }
+    }
+
+    fn persist_config(&self) {
+        if let Some(store) = &self.store {
+            match store.save_config(&self.config.get()) {
+                Ok(()) => self.status.set("配置已保存".to_owned()),
+                Err(error) => self.status.set(format!("保存配置失败：{error}")),
+            }
+        } else {
+            self.status.set("存储目录不可用".to_owned());
+        }
+    }
+
+    fn persist_history(&self) {
+        if let Some(store) = &self.store {
+            let _ = store.save_history(&self.history.get());
+        }
+    }
+
+    fn persist_favorites(&self) {
+        if let Some(store) = &self.store {
+            let _ = store.save_favorites(&self.favorites.get());
+        }
+    }
+
+    fn record_history(&self, url: &str) {
+        let url = url.trim().to_owned();
+        if url.is_empty() {
+            return;
+        }
+        self.history
+            .update(|history| storage::record_history(history, &url));
+        self.persist_history();
+    }
+
+    fn toggle_favorite_url(&self, url: &str) -> String {
         let url = url.trim();
         if url.is_empty() {
             return "没有可收藏的 URL".to_owned();
         }
-        let added = storage::toggle_favorite(&mut self.favorites, url);
-        if let Some(store) = &self.store {
-            let _ = store.save_favorites(&self.favorites);
-        }
+        let mut added = false;
+        self.favorites.update(|favorites| {
+            added = storage::toggle_favorite(favorites, url);
+        });
+        self.persist_favorites();
         if added {
             "已添加到收藏".to_owned()
         } else {
@@ -220,7 +252,7 @@ impl LinkInterceptorApp {
     }
 
     fn open_candidate_for_url(
-        &mut self,
+        &self,
         candidate: &crate::models::OpenCandidate,
         url: &str,
     ) -> String {
@@ -228,649 +260,749 @@ impl LinkInterceptorApp {
         if url.is_empty() {
             return "没有可打开的 URL".to_owned();
         }
-        storage::record_history(&mut self.history, url);
-        if let Some(store) = &self.store {
-            let _ = store.save_history(&self.history);
-        }
+        self.record_history(url);
         match windows_integration::launch_candidate(candidate, url) {
             Ok(()) => format!("已通过 {} 打开", candidate.name),
             Err(error) => format!("{} 打开失败：{error}", candidate.name),
         }
     }
 
-    fn show_main_window(&mut self, ctx: &egui::Context) {
-        match self.root_window {
-            RootWindow::Main => {
-                bring_viewport_to_front(ctx, egui::ViewportId::ROOT);
-            }
-            RootWindow::Intercept(_) => {
-                let was_open = self.secondary_main_open;
-                self.secondary_main_open = true;
-                let viewport_id = egui::ViewportId::from_hash_of("main-window");
-                if was_open || self.config.bring_new_windows_to_front {
-                    self.secondary_main_bring_to_front = true;
-                    bring_viewport_to_front(ctx, viewport_id);
-                }
-            }
-        }
-    }
-
-    fn drain_ipc(&mut self, ctx: &egui::Context) {
-        let mut commands = Vec::new();
-        if let Some(receiver) = &self.ipc_receiver {
-            while let Ok(command) = receiver.try_recv() {
-                commands.push(command);
-            }
-        }
-        for command in commands {
-            match command {
-                IpcCommand::ShowMain => self.show_main_window(ctx),
-                IpcCommand::OpenIntercept { url } => self.open_intercept_window(url, true),
-            }
-        }
-    }
-}
-
-impl eframe::App for LinkInterceptorApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.drain_ipc(ctx);
-        ctx.request_repaint_after(std::time::Duration::from_millis(200));
-        self.show_secondary_main_window(ctx);
-        self.show_intercept_windows(ctx);
-        self.show_root_window(ctx);
-    }
-}
-
-impl LinkInterceptorApp {
-    fn show_root_window(&mut self, ctx: &egui::Context) {
-        let root_window = std::mem::replace(&mut self.root_window, RootWindow::Main);
-        match root_window {
-            RootWindow::Main => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(
-                    AppMode::MainWindow.window_title().to_owned(),
-                ));
-                let close_requested = viewport_close_requested(ctx);
-                self.ui_main(ctx);
-                if close_requested {
-                    self.close_root_main(ctx);
-                } else {
-                    self.root_window = RootWindow::Main;
-                }
-            }
-            RootWindow::Intercept(mut window) => {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Title(format!(
-                    "拦截 URL #{}",
-                    window.id
-                )));
-                if window.bring_to_front {
-                    bring_current_viewport_to_front(ctx);
-                    window.bring_to_front = false;
-                }
-                let close_requested = viewport_close_requested(ctx);
-                egui::TopBottomPanel::bottom("root_intercept_status").show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.label(if window.status.is_empty() {
-                            "就绪"
-                        } else {
-                            &window.status
-                        });
-                    });
-                });
-                egui::CentralPanel::default().show(ctx, |ui| {
-                    self.ui_intercept(ctx, ui, &mut window);
-                });
-
-                if close_requested {
-                    self.replace_closed_root(ctx);
-                } else {
-                    self.root_window = RootWindow::Intercept(window);
-                }
-            }
-        }
-    }
-
-    fn close_root_main(&mut self, ctx: &egui::Context) {
-        if let Some(window) = self.intercept_windows.pop() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.root_window = RootWindow::Intercept(window);
-            return;
-        }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        self.root_window = RootWindow::Main;
-    }
-
-    fn replace_closed_root(&mut self, ctx: &egui::Context) {
-        if self.secondary_main_open {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.secondary_main_open = false;
-            self.root_window = RootWindow::Main;
-            return;
-        }
-        if let Some(window) = self.intercept_windows.pop() {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            self.root_window = RootWindow::Intercept(window);
-            return;
-        }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-    }
-
-    fn show_secondary_main_window(&mut self, ctx: &egui::Context) {
-        if !self.secondary_main_open {
+    fn show_or_create_main_window(&self) {
+        if let Some(window_id) = self.main_window.get() {
+            bring_window_to_front(window_id);
             return;
         }
 
-        let viewport_id = egui::ViewportId::from_hash_of("main-window");
-        let should_bring_to_front = self.secondary_main_bring_to_front;
-        let builder = egui::ViewportBuilder::default()
-            .with_title(AppMode::MainWindow.window_title())
-            .with_inner_size(AppMode::MainWindow.initial_size())
-            .with_min_inner_size(AppMode::MainWindow.min_size())
-            .with_active(should_bring_to_front);
-        let close_requested = ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
-            if should_bring_to_front {
-                bring_current_viewport_to_front(ctx);
-            }
-            let close_requested = viewport_close_requested(ctx);
-            self.ui_main(ctx);
-            close_requested
-        });
-        if should_bring_to_front {
-            self.secondary_main_bring_to_front = false;
-        }
-        if close_requested {
-            self.secondary_main_open = false;
-            self.secondary_main_bring_to_front = false;
-        }
-    }
-
-    fn ui_main(&mut self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("top_bar").show(ctx, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                tab_button(ui, &mut self.active_tab, Tab::History, "历史记录");
-                tab_button(ui, &mut self.active_tab, Tab::Favorites, "收藏");
-                tab_button(ui, &mut self.active_tab, Tab::Registration, "注册状态");
-                tab_button(ui, &mut self.active_tab, Tab::Settings, "设置");
-            });
-        });
-
-        egui::TopBottomPanel::bottom("status_bar").show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(if self.status.is_empty() {
-                    "就绪"
-                } else {
-                    &self.status
-                });
-            });
-        });
-
-        egui::CentralPanel::default().show(ctx, |ui| match self.active_tab {
-            Tab::History => self.ui_history(ui),
-            Tab::Favorites => self.ui_favorites(ui),
-            Tab::Registration => self.ui_registration(ui),
-            Tab::Settings => self.ui_settings(ui),
-        });
-
-        self.ui_clear_history_confirmation(ctx);
-        self.ui_reset_config_confirmation(ctx);
-    }
-
-    fn show_intercept_windows(&mut self, ctx: &egui::Context) {
-        let mut open_windows = Vec::new();
-        for mut window in std::mem::take(&mut self.intercept_windows) {
-            let viewport_id = egui::ViewportId::from_hash_of(("intercept", window.id));
-            let should_bring_to_front = window.bring_to_front;
-            let builder = egui::ViewportBuilder::default()
-                .with_title(format!("拦截 URL #{}", window.id))
-                .with_inner_size(AppMode::InterceptWindow.initial_size())
-                .with_min_inner_size(AppMode::InterceptWindow.min_size())
-                .with_active(should_bring_to_front);
-            let close_requested =
-                ctx.show_viewport_immediate(viewport_id, builder, |ctx, _class| {
-                    if should_bring_to_front {
-                        bring_current_viewport_to_front(ctx);
-                    }
-                    let close_requested = viewport_close_requested(ctx);
-                    egui::TopBottomPanel::bottom(format!("intercept_status_{}", window.id)).show(
-                        ctx,
-                        |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(if window.status.is_empty() {
-                                    "就绪"
-                                } else {
-                                    &window.status
-                                });
-                            });
-                        },
-                    );
-
-                    egui::CentralPanel::default().show(ctx, |ui| {
-                        self.ui_intercept(ctx, ui, &mut window);
-                    });
-                    close_requested
-                });
-            if should_bring_to_front {
-                window.bring_to_front = false;
-            }
-            if !close_requested {
-                open_windows.push(window);
-            }
-        }
-        self.intercept_windows = open_windows;
-    }
-
-    fn ui_intercept(
-        &mut self,
-        ctx: &egui::Context,
-        ui: &mut egui::Ui,
-        window: &mut InterceptWindow,
-    ) {
-        ui.heading("拦截到的 URL");
-        ui.add_space(8.0);
-        ui.add(
-            egui::TextEdit::multiline(&mut window.url)
-                .desired_rows(4)
-                .desired_width(ui.available_width())
-                .lock_focus(true)
-                .hint_text("URL 或 deeplink"),
+        let app = self.clone();
+        new_window(
+            move |window_id| {
+                app.main_window.set(Some(window_id));
+                if app.config.get().bring_new_windows_to_front {
+                    bring_window_to_front(window_id);
+                }
+                app.main_window_view(window_id)
+            },
+            Some(window_config(AppMode::MainWindow)),
         );
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("复制").clicked() {
-                ctx.copy_text(window.url.clone());
-                window.status = "已复制 URL".to_owned();
-            }
-            let favorite_label = if storage::is_favorite(&self.favorites, window.url.trim()) {
-                "取消收藏"
-            } else {
-                "收藏"
-            };
-            if ui.button(favorite_label).clicked() {
-                window.status = self.toggle_favorite_url(&window.url);
-            }
-            if ui.button("保存到历史记录").clicked() {
-                let url = window.url.trim().to_owned();
-                if !url.is_empty() {
-                    storage::record_history(&mut self.history, &url);
-                    if let Some(store) = &self.store {
-                        let _ = store.save_history(&self.history);
-                    }
-                    window.status = "已保存到历史记录".to_owned();
-                }
-            }
-        });
-
-        ui.separator();
-        ui.heading("打开方式");
-        let candidates = candidates::build_candidates(&self.config, window.url.trim());
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for candidate in candidates {
-                ui.horizontal(|ui| {
-                    let button =
-                        ui.add_enabled(candidate.available, egui::Button::new(&candidate.name));
-                    if button.clicked() {
-                        window.status = self.open_candidate_for_url(&candidate, &window.url);
-                    }
-                    ui.label(candidate_kind_label(candidate.kind.clone()));
-                    ui.small(candidate.reason);
-                });
-            }
-        });
     }
 
-    fn ui_history(&mut self, ui: &mut egui::Ui) {
-        ui.heading("历史记录");
-        ui.horizontal(|ui| {
-            ui.label("搜索");
-            ui.text_edit_singleline(&mut self.history_query);
-            if ui.button("清空历史记录").clicked() {
-                let target_pos = ui
-                    .ctx()
-                    .pointer_latest_pos()
-                    .unwrap_or_else(|| ui.next_widget_position());
-                self.clear_history_confirmation = Some(ClearHistoryConfirmation {
-                    target_pos,
-                    popup_pos: target_pos - egui::vec2(30.0, 41.0),
-                });
-            }
-        });
-        ui.separator();
-        let query = self.history_query.to_ascii_lowercase();
-        let rows: Vec<HistoryEntry> = self
-            .history
-            .iter()
-            .filter(|entry| query.is_empty() || entry.url.to_ascii_lowercase().contains(&query))
-            .cloned()
-            .collect();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for entry in rows {
-                ui.horizontal(|ui| {
-                    if ui.button("删除").clicked() {
-                        self.history.retain(|item| item.url != entry.url);
-                        if let Some(store) = &self.store {
-                            let _ = store.save_history(&self.history);
-                        }
-                    }
-                    if ui.button("打开").clicked() {
-                        self.open_intercept_window(entry.url.clone(), false);
-                    }
-                    ui.vertical(|ui| {
-                        ui.label(&entry.url);
-                        ui.small(format!(
-                            "最近：{} · 次数：{}",
-                            entry.last_seen_at.format("%Y-%m-%d %H:%M:%S"),
-                            entry.open_count
-                        ));
-                    });
-                });
-                ui.separator();
-            }
-        });
-    }
-
-    fn ui_clear_history_confirmation(&mut self, ctx: &egui::Context) {
-        let Some(confirmation) = &self.clear_history_confirmation else {
-            return;
-        };
-        let target_pos = confirmation.target_pos;
-        let popup_pos = confirmation.popup_pos;
-
-        let mut cancel_requested = false;
-        let mut clear_requested = false;
-        let mut alignment_delta = None;
-
-        egui::Area::new(egui::Id::new("clear_history_confirmation"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(popup_pos)
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.label("此操作会删除全部历史记录，且无法撤销。");
-                    ui.horizontal(|ui| {
-                        let cancel_response = ui.button("取消");
-                        alignment_delta = Some(target_pos - cancel_response.rect.center());
-                        if cancel_response.clicked() {
-                            cancel_requested = true;
-                        }
-                        if ui.button("确认清空").clicked() {
-                            clear_requested = true;
-                        }
-                    });
-                });
-            });
-
-        if let Some(delta) = alignment_delta {
-            let is_aligned = delta.length_sq() <= 1.0;
-            if let Some(confirmation) = &mut self.clear_history_confirmation {
-                if !is_aligned {
-                    confirmation.popup_pos += delta;
-                }
-            }
-            if !is_aligned {
-                ctx.request_repaint();
-                return;
-            }
+    fn open_intercept_window(&self, url: String, record_history: bool) {
+        let url = url.trim().to_owned();
+        if record_history {
+            self.record_history(&url);
         }
 
-        if clear_requested {
-            self.history.clear();
-            if let Some(store) = &self.store {
-                let _ = store.save_history(&self.history);
-            }
-            self.clear_history_confirmation = None;
-            self.status = "历史记录已清空".to_owned();
-        } else if cancel_requested {
-            self.clear_history_confirmation = None;
-        }
+        let app = self.clone();
+        let id = self.next_intercept_id.get();
+        self.next_intercept_id.set(id + 1);
+        new_window(
+            move |window_id| {
+                if app.config.get().bring_new_windows_to_front {
+                    bring_window_to_front(window_id);
+                }
+                app.intercept_window_view(window_id, url.clone())
+            },
+            Some(
+                window_config(AppMode::InterceptWindow)
+                    .title(format!("拦截 URL #{id}"))
+                    .size(AppMode::InterceptWindow.initial_size()),
+            ),
+        );
     }
 
-    fn ui_reset_config_confirmation(&mut self, ctx: &egui::Context) {
-        let Some(confirmation) = &self.reset_config_confirmation else {
-            return;
-        };
-        let target_pos = confirmation.target_pos;
-        let popup_pos = confirmation.popup_pos;
-
-        let mut cancel_requested = false;
-        let mut reset_requested = false;
-        let mut alignment_delta = None;
-
-        egui::Area::new(egui::Id::new("reset_config_confirmation"))
-            .order(egui::Order::Foreground)
-            .fixed_pos(popup_pos)
-            .show(ctx, |ui| {
-                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                    ui.label("此操作会将设置恢复为默认值，不会删除历史记录和收藏。");
-                    ui.horizontal(|ui| {
-                        let cancel_response = ui.button("取消");
-                        alignment_delta = Some(target_pos - cancel_response.rect.center());
-                        if cancel_response.clicked() {
-                            cancel_requested = true;
-                        }
-                        if ui.button("确认恢复").clicked() {
-                            reset_requested = true;
-                        }
-                    });
-                });
-            });
-
-        if let Some(delta) = alignment_delta {
-            let is_aligned = delta.length_sq() <= 1.0;
-            if let Some(confirmation) = &mut self.reset_config_confirmation {
-                if !is_aligned {
-                    confirmation.popup_pos += delta;
+    fn main_window_view(&self, window_id: WindowId) -> floem::AnyView {
+        let app = self.clone();
+        let tab = self.active_tab;
+        let content_app = self.clone();
+        v_stack((
+            h_stack((
+                tab_button("历史记录", tab, Tab::History),
+                tab_button("收藏", tab, Tab::Favorites),
+                tab_button("注册状态", tab, Tab::Registration),
+                tab_button("设置", tab, Tab::Settings),
+            ))
+            .style(|s| s.gap(8).padding(10)),
+            dyn_view(move || match tab.get() {
+                Tab::History => content_app.history_view().into_any(),
+                Tab::Favorites => content_app.favorites_view().into_any(),
+                Tab::Registration => content_app.registration_view().into_any(),
+                Tab::Settings => content_app.settings_view().into_any(),
+            })
+            .style(|s| {
+                s.flex_grow(1.0)
+                    .flex_shrink(1.0)
+                    .width_full()
+                    .min_height(0.0)
+            }),
+            label(move || {
+                let status = app.status.get();
+                if status.is_empty() {
+                    "就绪".to_owned()
+                } else {
+                    status
+                }
+            })
+            .style(|s| s.padding(10)),
+        ))
+        .on_key_down(
+            Key::Character("w".into()),
+            |modifiers| modifiers.control(),
+            move |_| {
+                close_window(window_id);
+            },
+        )
+        .on_cleanup({
+            let app = self.clone();
+            move || {
+                if app.main_window.get() == Some(window_id) {
+                    app.main_window.set(None);
                 }
             }
-            if !is_aligned {
-                ctx.request_repaint();
-                return;
-            }
-        }
-
-        if reset_requested {
-            self.config = Config::default();
-            self.new_custom_app = CustomApp::default();
-            self.new_domain_rule = DomainRule::default();
-            if let Some(store) = &self.store {
-                match store.save_config(&self.config) {
-                    Ok(()) => self.status = "已恢复默认设置".to_owned(),
-                    Err(error) => self.status = format!("恢复默认设置失败：{error}"),
-                }
-            } else {
-                self.status = "存储目录不可用".to_owned();
-            }
-            self.reset_config_confirmation = None;
-        } else if cancel_requested {
-            self.reset_config_confirmation = None;
-        }
+        })
+        .style(|s| s.size_full().flex_col())
+        .into_any()
     }
 
-    fn ui_favorites(&mut self, ui: &mut egui::Ui) {
-        ui.heading("收藏");
-        ui.horizontal(|ui| {
-            ui.label("搜索");
-            ui.text_edit_singleline(&mut self.favorites_query);
-        });
-        ui.separator();
-        let query = self.favorites_query.to_ascii_lowercase();
-        let rows: Vec<FavoriteEntry> = self
-            .favorites
-            .iter()
-            .filter(|entry| query.is_empty() || entry.url.to_ascii_lowercase().contains(&query))
-            .cloned()
-            .collect();
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            for entry in rows {
-                ui.horizontal(|ui| {
-                    if ui.button("移除").clicked() {
-                        self.favorites.retain(|item| item.url != entry.url);
-                        if let Some(store) = &self.store {
-                            let _ = store.save_favorites(&self.favorites);
-                        }
+    fn intercept_window_view(&self, window_id: WindowId, initial_url: String) -> floem::AnyView {
+        let url = RwSignal::new(initial_url);
+        let window_status = RwSignal::new(String::new());
+        let app = self.clone();
+        let candidates_app = self.clone();
+        v_stack((
+            text("拦截到的 URL").style(|s| s.font_size(22.0)),
+            text_input(url)
+                .style(|s| s.width_full().min_height(72.0))
+                .keyboard_navigable(),
+            h_stack((
+                button("复制").action({
+                    let window_status = window_status;
+                    move || match Clipboard::set_contents(url.get()) {
+                        Ok(()) => window_status.set("已复制 URL".to_owned()),
+                        Err(error) => window_status.set(format!("复制失败：{error:?}")),
                     }
-                    if ui.button("打开").clicked() {
-                        self.open_intercept_window(entry.url.clone(), false);
+                }),
+                button(label(move || {
+                    if storage::is_favorite(&app.favorites.get(), url.get().trim()) {
+                        "取消收藏".to_owned()
+                    } else {
+                        "收藏".to_owned()
                     }
-                    ui.vertical(|ui| {
-                        ui.label(&entry.url);
-                        ui.small(format!(
-                            "添加时间：{}",
-                            entry.added_at.format("%Y-%m-%d %H:%M:%S")
-                        ));
-                    });
-                });
-                ui.separator();
-            }
-        });
-    }
-
-    fn ui_registration(&mut self, ui: &mut egui::Ui) {
-        ui.heading("注册状态");
-        self.registration_state = windows_integration::registration_state();
-        ui.label(match self.registration_state {
-            RegistrationState::NotRegistered => "状态：尚未注册为浏览器候选项",
-            RegistrationState::Registered => "状态：已注册，但 Windows 可能尚未将其设为默认",
-            RegistrationState::PossibleDefault => "状态：已注册，并且可能已被选为默认应用",
-        });
-        if let Ok(exe) = windows_integration::current_exe() {
-            ui.small(format!("当前 exe：{}", exe.display()));
-        }
-        ui.add_space(8.0);
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("注册当前 exe").clicked() {
-                match windows_integration::register_application() {
-                    Ok(()) => {
-                        self.status = "已注册。请在 Windows 设置中将其设为默认应用。".to_owned()
+                }))
+                .action({
+                    let app = app.clone();
+                    let window_status = window_status;
+                    move || window_status.set(app.toggle_favorite_url(&url.get()))
+                }),
+                button("保存到历史记录").action({
+                    let app = app.clone();
+                    let window_status = window_status;
+                    move || {
+                        app.record_history(&url.get());
+                        window_status.set("已保存到历史记录".to_owned());
                     }
-                    Err(error) => self.status = format!("注册失败：{error}"),
-                }
-            }
-            if ui.button("反注册").clicked() {
-                match windows_integration::unregister_application() {
-                    Ok(()) => self.status = "已反注册".to_owned(),
-                    Err(error) => self.status = format!("反注册失败：{error}"),
-                }
-            }
-            if ui.button("打开默认应用设置").clicked() {
-                match windows_integration::open_default_apps_settings() {
-                    Ok(()) => self.status = "已打开 Windows 设置".to_owned(),
-                    Err(error) => self.status = format!("打开设置失败：{error}"),
-                }
-            }
-        });
-    }
-
-    fn ui_settings(&mut self, ui: &mut egui::Ui) {
-        ui.heading("窗口");
-        if ui
-            .checkbox(
-                &mut self.config.bring_new_windows_to_front,
-                "打开新窗口时自动置顶",
+                }),
+            ))
+            .style(|s| s.gap(8)),
+            text("打开方式").style(|s| s.font_size(20.0)),
+            scroll(
+                dyn_stack(
+                    move || candidates::build_candidates(&candidates_app.config.get(), &url.get()),
+                    |candidate| {
+                        (
+                            candidate.name.clone(),
+                            format!("{:?}", candidate.kind),
+                            candidate.command.clone(),
+                        )
+                    },
+                    {
+                        let app = self.clone();
+                        move |candidate: crate::models::OpenCandidate| {
+                            let name = candidate.name.clone();
+                            let enabled = candidate.available;
+                            h_stack((
+                                button(name).disabled(move || !enabled).action({
+                                    let app = app.clone();
+                                    let candidate = candidate.clone();
+                                    let window_status = window_status;
+                                    move || {
+                                        window_status.set(
+                                            app.open_candidate_for_url(&candidate, &url.get()),
+                                        );
+                                    }
+                                }),
+                                text(candidate_kind_label(candidate.kind).to_owned()),
+                                text(candidate.reason),
+                            ))
+                            .style(|s| s.gap(8).items_center())
+                        }
+                    },
+                )
+                .style(|s| s.flex_col().gap(6)),
             )
-            .changed()
-        {
-            self.persist_config();
-        }
-
-        ui.separator();
-        ui.heading("自定义应用");
-        let mut remove_app = None;
-        for (index, app) in self.config.custom_apps.iter_mut().enumerate() {
-            ui.group(|ui| {
-                ui.horizontal(|ui| {
-                    ui.label("名称");
-                    ui.text_edit_singleline(&mut app.name);
-                    if ui.button("移除").clicked() {
-                        remove_app = Some(index);
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("可执行文件");
-                    ui.text_edit_singleline(&mut app.executable);
-                });
-                ui.horizontal(|ui| {
-                    ui.label("参数");
-                    ui.text_edit_singleline(&mut app.args_template);
-                });
-            });
-        }
-        if let Some(index) = remove_app {
-            self.config.custom_apps.remove(index);
-            self.persist_config();
-        }
-        ui.collapsing("添加自定义应用", |ui| {
-            ui.horizontal(|ui| {
-                ui.label("名称");
-                ui.text_edit_singleline(&mut self.new_custom_app.name);
-            });
-            ui.horizontal(|ui| {
-                ui.label("可执行文件");
-                ui.text_edit_singleline(&mut self.new_custom_app.executable);
-            });
-            ui.horizontal(|ui| {
-                ui.label("参数");
-                ui.text_edit_singleline(&mut self.new_custom_app.args_template);
-            });
-            if ui.button("添加").clicked() {
-                if !self.new_custom_app.name.trim().is_empty() {
-                    self.config.custom_apps.push(self.new_custom_app.clone());
-                    self.new_custom_app = CustomApp::default();
-                    self.persist_config();
+            .style(|s| s.flex_grow(1.0).width_full()),
+            label(move || {
+                let status = window_status.get();
+                if status.is_empty() {
+                    "就绪".to_owned()
+                } else {
+                    status
                 }
-            }
-        });
-
-        ui.separator();
-        ui.heading("域名规则");
-        let mut remove_rule = None;
-        for (index, rule) in self.config.domain_rules.iter_mut().enumerate() {
-            ui.horizontal(|ui| {
-                ui.label("匹配模式");
-                ui.text_edit_singleline(&mut rule.pattern);
-                ui.label("应用");
-                ui.text_edit_singleline(&mut rule.app_name);
-                if ui.button("移除").clicked() {
-                    remove_rule = Some(index);
-                }
-            });
-        }
-        if let Some(index) = remove_rule {
-            self.config.domain_rules.remove(index);
-            self.persist_config();
-        }
-        ui.collapsing("添加域名规则", |ui| {
-            ui.horizontal(|ui| {
-                ui.label("匹配模式");
-                ui.text_edit_singleline(&mut self.new_domain_rule.pattern);
-            });
-            ui.horizontal(|ui| {
-                ui.label("应用名称");
-                ui.text_edit_singleline(&mut self.new_domain_rule.app_name);
-            });
-            if ui.button("添加").clicked() {
-                if !self.new_domain_rule.pattern.trim().is_empty() {
-                    self.config.domain_rules.push(self.new_domain_rule.clone());
-                    self.new_domain_rule = DomainRule::default();
-                    self.persist_config();
-                }
-            }
-        });
-
-        ui.separator();
-        ui.horizontal(|ui| {
-            if ui.button("保存设置").clicked() {
-                self.persist_all();
-            }
-            if ui.button("恢复默认设置").clicked() {
-                let target_pos = ui
-                    .ctx()
-                    .pointer_latest_pos()
-                    .unwrap_or_else(|| ui.next_widget_position());
-                self.reset_config_confirmation = Some(ResetConfigConfirmation {
-                    target_pos,
-                    popup_pos: target_pos - egui::vec2(30.0, 41.0),
-                });
-            }
-        });
+            }),
+        ))
+        .on_key_down(
+            Key::Character("w".into()),
+            |modifiers| modifiers.control(),
+            move |_| {
+                close_window(window_id);
+            },
+        )
+        .style(|s| s.size_full().padding(14).gap(10).flex_col())
+        .into_any()
     }
+
+    fn history_view(&self) -> impl IntoView + 'static {
+        let app = self.clone();
+        let rows_app = self.clone();
+        v_stack((
+            text("历史记录").style(|s| s.font_size(22.0)),
+            h_stack((
+                text("搜索"),
+                text_input(self.history_query).style(|s| s.width(320.0)),
+                button("清空历史记录").action({
+                    let app = self.clone();
+                    move || app.clear_history_confirmation.set(true)
+                }),
+            ))
+            .style(|s| s.gap(8).items_center()),
+            dyn_view(move || {
+                if app.clear_history_confirmation.get() {
+                    h_stack((
+                        text("此操作会删除全部历史记录，且无法撤销。"),
+                        button("取消").action({
+                            let app = app.clone();
+                            move || app.clear_history_confirmation.set(false)
+                        }),
+                        button("确认清空").action({
+                            let app = app.clone();
+                            move || {
+                                app.history.set(Vec::new());
+                                app.persist_history();
+                                app.clear_history_confirmation.set(false);
+                                app.status.set("历史记录已清空".to_owned());
+                            }
+                        }),
+                    ))
+                    .style(|s| s.gap(8).padding(8))
+                    .into_any()
+                } else {
+                    text("").into_any()
+                }
+            }),
+            scroll(
+                dyn_stack(
+                    move || {
+                        let query = rows_app.history_query.get().to_ascii_lowercase();
+                        rows_app
+                            .history
+                            .get()
+                            .into_iter()
+                            .filter(|entry| {
+                                query.is_empty() || entry.url.to_ascii_lowercase().contains(&query)
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                    |entry| entry.url.clone(),
+                    {
+                        let app = self.clone();
+                        move |entry: HistoryEntry| {
+                            let url = entry.url.clone();
+                            h_stack((
+                                button("删除")
+                                    .action({
+                                        let app = app.clone();
+                                        let url = url.clone();
+                                        move || {
+                                            app.history.update(|history| {
+                                                history.retain(|item| item.url != url);
+                                            });
+                                            app.persist_history();
+                                        }
+                                    })
+                                    .style(|s| s.flex_shrink(0.0)),
+                                button("打开")
+                                    .action({
+                                        let app = app.clone();
+                                        let url = url.clone();
+                                        move || app.open_intercept_window(url.clone(), false)
+                                    })
+                                    .style(|s| s.flex_shrink(0.0)),
+                                v_stack((
+                                    text(entry.url).style(|s| {
+                                        s.font_size(15.0)
+                                            .width_full()
+                                            .min_width(0.0)
+                                            .flex_shrink(1.0)
+                                    }),
+                                    text(format!(
+                                        "最近：{} · 次数：{}",
+                                        entry.last_seen_at.format("%Y-%m-%d %H:%M:%S"),
+                                        entry.open_count
+                                    ))
+                                    .style(|s| {
+                                        s.font_size(11.0)
+                                            .color(Color::rgb8(100, 100, 100))
+                                            .width_full()
+                                            .min_width(0.0)
+                                    }),
+                                ))
+                                .style(|s| {
+                                    s.flex_grow(1.0)
+                                        .flex_shrink(1.0)
+                                        .flex_basis(0.0)
+                                        .width_full()
+                                        .min_width(0.0)
+                                }),
+                            ))
+                            .style(|s| {
+                                s.gap(8)
+                                    .items_start()
+                                    .padding(4)
+                                    .width_full()
+                                    .min_width(0.0)
+                            })
+                        }
+                    },
+                )
+                .style(|s| s.flex_col().gap(4).width_full().min_width(0.0)),
+            )
+            .style(|s| {
+                s.flex_grow(1.0)
+                    .flex_shrink(1.0)
+                    .width_full()
+                    .min_height(0.0)
+            }),
+        ))
+        .style(|s| s.size_full().padding(14).gap(10).flex_col().min_height(0.0))
+    }
+
+    fn favorites_view(&self) -> impl IntoView + 'static {
+        let rows_app = self.clone();
+        v_stack((
+            text("收藏").style(|s| s.font_size(22.0)),
+            h_stack((
+                text("搜索"),
+                text_input(self.favorites_query).style(|s| s.width(320.0)),
+            ))
+            .style(|s| s.gap(8).items_center()),
+            scroll(
+                dyn_stack(
+                    move || {
+                        let query = rows_app.favorites_query.get().to_ascii_lowercase();
+                        rows_app
+                            .favorites
+                            .get()
+                            .into_iter()
+                            .filter(|entry| {
+                                query.is_empty() || entry.url.to_ascii_lowercase().contains(&query)
+                            })
+                            .collect::<Vec<_>>()
+                    },
+                    |entry| entry.url.clone(),
+                    {
+                        let app = self.clone();
+                        move |entry: FavoriteEntry| {
+                            let url = entry.url.clone();
+                            h_stack((
+                                button("移除")
+                                    .action({
+                                        let app = app.clone();
+                                        let url = url.clone();
+                                        move || {
+                                            app.favorites.update(|favorites| {
+                                                favorites.retain(|item| item.url != url);
+                                            });
+                                            app.persist_favorites();
+                                        }
+                                    })
+                                    .style(|s| s.flex_shrink(0.0)),
+                                button("打开")
+                                    .action({
+                                        let app = app.clone();
+                                        let url = url.clone();
+                                        move || app.open_intercept_window(url.clone(), false)
+                                    })
+                                    .style(|s| s.flex_shrink(0.0)),
+                                v_stack((
+                                    text(entry.url).style(|s| {
+                                        s.font_size(15.0)
+                                            .width_full()
+                                            .min_width(0.0)
+                                            .flex_shrink(1.0)
+                                    }),
+                                    text(format!(
+                                        "添加时间：{}",
+                                        entry.added_at.format("%Y-%m-%d %H:%M:%S")
+                                    ))
+                                    .style(|s| {
+                                        s.font_size(11.0)
+                                            .color(Color::rgb8(100, 100, 100))
+                                            .width_full()
+                                            .min_width(0.0)
+                                    }),
+                                ))
+                                .style(|s| {
+                                    s.flex_grow(1.0)
+                                        .flex_shrink(1.0)
+                                        .flex_basis(0.0)
+                                        .width_full()
+                                        .min_width(0.0)
+                                }),
+                            ))
+                            .style(|s| {
+                                s.gap(8)
+                                    .items_start()
+                                    .padding(4)
+                                    .width_full()
+                                    .min_width(0.0)
+                            })
+                        }
+                    },
+                )
+                .style(|s| s.flex_col().gap(4).width_full().min_width(0.0)),
+            )
+            .style(|s| {
+                s.flex_grow(1.0)
+                    .flex_shrink(1.0)
+                    .width_full()
+                    .min_height(0.0)
+            }),
+        ))
+        .style(|s| s.size_full().padding(14).gap(10).flex_col().min_height(0.0))
+    }
+
+    fn registration_view(&self) -> impl IntoView + 'static {
+        let app = self.clone();
+        create_effect({
+            let app = app.clone();
+            move |_| {
+                app.registration_state
+                    .set(windows_integration::registration_state())
+            }
+        });
+
+        v_stack((
+            text("注册状态").style(|s| s.font_size(22.0)),
+            label({
+                let app = app.clone();
+                move || match app.registration_state.get() {
+                    RegistrationState::NotRegistered => "状态：尚未注册为浏览器候选项".to_owned(),
+                    RegistrationState::Registered => {
+                        "状态：已注册，但 Windows 可能尚未将其设为默认".to_owned()
+                    }
+                    RegistrationState::PossibleDefault => {
+                        "状态：已注册，并且可能已被选为默认应用".to_owned()
+                    }
+                }
+            }),
+            text(
+                windows_integration::current_exe()
+                    .map(|exe| format!("当前 exe：{}", exe.display()))
+                    .unwrap_or_else(|error| format!("当前 exe：{error}")),
+            )
+            .style(|s| s.font_size(12.0)),
+            h_stack((
+                button("注册当前 exe").action({
+                    let app = app.clone();
+                    move || match windows_integration::register_application() {
+                        Ok(()) => {
+                            app.registration_state
+                                .set(windows_integration::registration_state());
+                            app.status
+                                .set("已注册。请在 Windows 设置中将其设为默认应用。".to_owned());
+                        }
+                        Err(error) => app.status.set(format!("注册失败：{error}")),
+                    }
+                }),
+                button("反注册").action({
+                    let app = app.clone();
+                    move || match windows_integration::unregister_application() {
+                        Ok(()) => {
+                            app.registration_state
+                                .set(windows_integration::registration_state());
+                            app.status.set("已反注册".to_owned());
+                        }
+                        Err(error) => app.status.set(format!("反注册失败：{error}")),
+                    }
+                }),
+                button("打开默认应用设置").action({
+                    let app = app.clone();
+                    move || match windows_integration::open_default_apps_settings() {
+                        Ok(()) => app.status.set("已打开 Windows 设置".to_owned()),
+                        Err(error) => app.status.set(format!("打开设置失败：{error}")),
+                    }
+                }),
+            ))
+            .style(|s| s.gap(8)),
+        ))
+        .style(|s| s.size_full().padding(14).gap(10).flex_col())
+    }
+
+    fn settings_view(&self) -> impl IntoView + 'static {
+        let app = self.clone();
+        v_stack((
+            text("窗口").style(|s| s.font_size(22.0)),
+            button(label(move || {
+                if app.config.get().bring_new_windows_to_front {
+                    "打开新窗口时自动置顶：开".to_owned()
+                } else {
+                    "打开新窗口时自动置顶：关".to_owned()
+                }
+            }))
+            .action({
+                let app = self.clone();
+                move || {
+                    app.config.update(|config| {
+                        config.bring_new_windows_to_front = !config.bring_new_windows_to_front;
+                    });
+                    app.persist_config();
+                }
+            }),
+            text("自定义应用").style(|s| s.font_size(20.0)),
+            self.custom_apps_view(),
+            text("添加自定义应用").style(|s| s.font_size(16.0)),
+            h_stack((
+                text("名称"),
+                text_input(self.new_custom_name).style(|s| s.width(150.0)),
+                text("可执行文件"),
+                text_input(self.new_custom_executable).style(|s| s.width(240.0)),
+                text("参数"),
+                text_input(self.new_custom_args).style(|s| s.width(180.0)),
+                button("添加").action({
+                    let app = self.clone();
+                    move || {
+                        let name = app.new_custom_name.get();
+                        if name.trim().is_empty() {
+                            return;
+                        }
+                        app.config.update(|config| {
+                            config.custom_apps.push(CustomApp {
+                                name,
+                                executable: app.new_custom_executable.get(),
+                                args_template: app.new_custom_args.get(),
+                            });
+                        });
+                        let default = CustomApp::default();
+                        app.new_custom_name.set(default.name);
+                        app.new_custom_executable.set(default.executable);
+                        app.new_custom_args.set(default.args_template);
+                        app.persist_config();
+                    }
+                }),
+            ))
+            .style(|s| s.gap(6).items_center()),
+            text("域名规则").style(|s| s.font_size(20.0)),
+            self.domain_rules_view(),
+            text("添加域名规则").style(|s| s.font_size(16.0)),
+            h_stack((
+                text("匹配模式"),
+                text_input(self.new_domain_pattern).style(|s| s.width(180.0)),
+                text("应用名称"),
+                text_input(self.new_domain_app_name).style(|s| s.width(180.0)),
+                button("添加").action({
+                    let app = self.clone();
+                    move || {
+                        let pattern = app.new_domain_pattern.get();
+                        if pattern.trim().is_empty() {
+                            return;
+                        }
+                        app.config.update(|config| {
+                            config.domain_rules.push(DomainRule {
+                                pattern,
+                                app_name: app.new_domain_app_name.get(),
+                            });
+                        });
+                        let default = DomainRule::default();
+                        app.new_domain_pattern.set(default.pattern);
+                        app.new_domain_app_name.set(default.app_name);
+                        app.persist_config();
+                    }
+                }),
+            ))
+            .style(|s| s.gap(6).items_center()),
+            h_stack((
+                button("保存设置").action({
+                    let app = self.clone();
+                    move || app.persist_all()
+                }),
+                button("恢复默认设置").action({
+                    let app = self.clone();
+                    move || app.reset_config_confirmation.set(true)
+                }),
+            ))
+            .style(|s| s.gap(8)),
+            dyn_view({
+                let app = self.clone();
+                move || {
+                    if app.reset_config_confirmation.get() {
+                        h_stack((
+                            text("此操作会将设置恢复为默认值，不会删除历史记录和收藏。"),
+                            button("取消").action({
+                                let app = app.clone();
+                                move || app.reset_config_confirmation.set(false)
+                            }),
+                            button("确认恢复").action({
+                                let app = app.clone();
+                                move || {
+                                    app.config.set(Config::default());
+                                    let default_app = CustomApp::default();
+                                    let default_rule = DomainRule::default();
+                                    app.new_custom_name.set(default_app.name);
+                                    app.new_custom_executable.set(default_app.executable);
+                                    app.new_custom_args.set(default_app.args_template);
+                                    app.new_domain_pattern.set(default_rule.pattern);
+                                    app.new_domain_app_name.set(default_rule.app_name);
+                                    app.persist_config();
+                                    app.reset_config_confirmation.set(false);
+                                    app.status.set("已恢复默认设置".to_owned());
+                                }
+                            }),
+                        ))
+                        .style(|s| s.gap(8).padding(8))
+                        .into_any()
+                    } else {
+                        text("").into_any()
+                    }
+                }
+            }),
+        ))
+        .style(|s| s.size_full().padding(14).gap(10).flex_col())
+    }
+
+    fn custom_apps_view(&self) -> impl IntoView + 'static {
+        let app = self.clone();
+        dyn_stack(
+            move || {
+                app.config
+                    .get()
+                    .custom_apps
+                    .into_iter()
+                    .enumerate()
+                    .collect::<Vec<_>>()
+            },
+            |(index, app)| (*index, app.name.clone()),
+            {
+                let state = self.clone();
+                move |(index, custom_app): (usize, CustomApp)| {
+                    let name = RwSignal::new(custom_app.name);
+                    let executable = RwSignal::new(custom_app.executable);
+                    let args_template = RwSignal::new(custom_app.args_template);
+                    h_stack((
+                        text("名称"),
+                        text_input(name).style(|s| s.width(140.0)),
+                        text("可执行文件"),
+                        text_input(executable).style(|s| s.width(220.0)),
+                        text("参数"),
+                        text_input(args_template).style(|s| s.width(160.0)),
+                        button("保存").action({
+                            let state = state.clone();
+                            move || {
+                                state.config.update(|config| {
+                                    if let Some(app) = config.custom_apps.get_mut(index) {
+                                        app.name = name.get();
+                                        app.executable = executable.get();
+                                        app.args_template = args_template.get();
+                                    }
+                                });
+                                state.persist_config();
+                            }
+                        }),
+                        button("移除").action({
+                            let state = state.clone();
+                            move || {
+                                state.config.update(|config| {
+                                    if index < config.custom_apps.len() {
+                                        config.custom_apps.remove(index);
+                                    }
+                                });
+                                state.persist_config();
+                            }
+                        }),
+                    ))
+                    .style(|s| s.gap(6).items_center().padding(4))
+                }
+            },
+        )
+        .style(|s| s.flex_col().gap(4))
+    }
+
+    fn domain_rules_view(&self) -> impl IntoView + 'static {
+        let app = self.clone();
+        dyn_stack(
+            move || {
+                app.config
+                    .get()
+                    .domain_rules
+                    .into_iter()
+                    .enumerate()
+                    .collect::<Vec<_>>()
+            },
+            |(index, rule)| (*index, rule.pattern.clone(), rule.app_name.clone()),
+            {
+                let state = self.clone();
+                move |(index, rule): (usize, DomainRule)| {
+                    let pattern = RwSignal::new(rule.pattern);
+                    let app_name = RwSignal::new(rule.app_name);
+                    h_stack((
+                        text("匹配模式"),
+                        text_input(pattern).style(|s| s.width(180.0)),
+                        text("应用"),
+                        text_input(app_name).style(|s| s.width(180.0)),
+                        button("保存").action({
+                            let state = state.clone();
+                            move || {
+                                state.config.update(|config| {
+                                    if let Some(rule) = config.domain_rules.get_mut(index) {
+                                        rule.pattern = pattern.get();
+                                        rule.app_name = app_name.get();
+                                    }
+                                });
+                                state.persist_config();
+                            }
+                        }),
+                        button("移除").action({
+                            let state = state.clone();
+                            move || {
+                                state.config.update(|config| {
+                                    if index < config.domain_rules.len() {
+                                        config.domain_rules.remove(index);
+                                    }
+                                });
+                                state.persist_config();
+                            }
+                        }),
+                    ))
+                    .style(|s| s.gap(6).items_center().padding(4))
+                }
+            },
+        )
+        .style(|s| s.flex_col().gap(4))
+    }
+}
+
+fn tab_button(label_text: &'static str, active_tab: RwSignal<Tab>, tab: Tab) -> impl IntoView {
+    button(label(move || label_text.to_owned())).action(move || active_tab.set(tab))
+}
+
+fn window_config(mode: AppMode) -> WindowConfig {
+    WindowConfig::default()
+        .title(mode.window_title())
+        .size(mode.initial_size())
+}
+
+fn bring_window_to_front(window_id: WindowId) {
+    window_id.set_visible(true);
+    window_id.minimized(false);
+    window_id.request_attention(Urgency::Informational);
 }
 
 fn candidate_kind_label(kind: crate::models::CandidateKind) -> &'static str {
@@ -881,34 +1013,4 @@ fn candidate_kind_label(kind: crate::models::CandidateKind) -> &'static str {
         crate::models::CandidateKind::CustomApp => "自定义应用",
         crate::models::CandidateKind::ShellFallback => "Windows 默认处理程序",
     }
-}
-
-fn tab_button(ui: &mut egui::Ui, active_tab: &mut Tab, tab: Tab, label: &str) {
-    if ui.selectable_label(*active_tab == tab, label).clicked() {
-        *active_tab = tab;
-    }
-}
-
-fn viewport_close_requested(ctx: &egui::Context) -> bool {
-    ctx.input(|input| {
-        input.viewport().close_requested()
-            || (input.modifiers.ctrl && input.key_pressed(egui::Key::W))
-    })
-}
-
-fn bring_current_viewport_to_front(ctx: &egui::Context) {
-    ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-    ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
-        egui::UserAttentionType::Informational,
-    ));
-}
-
-fn bring_viewport_to_front(ctx: &egui::Context, viewport_id: egui::ViewportId) {
-    ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Minimized(false));
-    ctx.send_viewport_cmd_to(viewport_id, egui::ViewportCommand::Focus);
-    ctx.send_viewport_cmd_to(
-        viewport_id,
-        egui::ViewportCommand::RequestUserAttention(egui::UserAttentionType::Informational),
-    );
 }

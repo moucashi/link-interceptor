@@ -325,6 +325,7 @@ fn window_config(mode: AppMode) -> WindowConfig {
 }
 
 fn bring_window_to_front(window_id: WindowId) {
+    crate::native_window::bring_to_front(window_id);
     window_id.set_visible(true);
     window_id.minimized(false);
     window_id.request_attention(Urgency::Informational);

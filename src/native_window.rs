@@ -7,7 +7,9 @@ use windows::Win32::{
         HiDpi::{AdjustWindowRectExForDpi, GetDpiForWindow},
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{
-            GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, MINMAXINFO, WINDOW_EX_STYLE, WINDOW_STYLE,
+            BringWindowToTop, GWL_EXSTYLE, GWL_STYLE, GetWindowLongPtrW, HWND_TOP, IsIconic,
+            MINMAXINFO, SW_RESTORE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW,
+            SetForegroundWindow, SetWindowPos, ShowWindow, WINDOW_EX_STYLE, WINDOW_STYLE,
             WM_GETMINMAXINFO, WM_NCDESTROY,
         },
     },
@@ -24,6 +26,10 @@ struct MinimumContentSize {
 
 pub fn set_minimum_content_size(window_id: WindowId, minimum_size: Size) {
     set_minimum_content_size_impl(window_id, minimum_size);
+}
+
+pub fn bring_to_front(window_id: WindowId) {
+    bring_to_front_impl(window_id);
 }
 
 #[cfg(windows)]
@@ -51,6 +57,30 @@ fn set_minimum_content_size_impl(window_id: WindowId, minimum_size: Size) {
 
 #[cfg(not(windows))]
 fn set_minimum_content_size_impl(_window_id: WindowId, _minimum_size: Size) {}
+
+#[cfg(windows)]
+fn bring_to_front_impl(window_id: WindowId) {
+    let hwnd = window_id_to_hwnd(window_id);
+    unsafe {
+        if IsIconic(hwnd).as_bool() {
+            let _ = ShowWindow(hwnd, SW_RESTORE);
+        }
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_TOP),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW,
+        );
+        let _ = BringWindowToTop(hwnd);
+        let _ = SetForegroundWindow(hwnd);
+    }
+}
+
+#[cfg(not(windows))]
+fn bring_to_front_impl(_window_id: WindowId) {}
 
 #[cfg(windows)]
 fn window_id_to_hwnd(window_id: WindowId) -> HWND {

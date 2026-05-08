@@ -25,6 +25,14 @@ pub enum AppMode {
     InterceptWindow,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MainTab {
+    History,
+    Favorites,
+    Registration,
+    Settings,
+}
+
 impl AppMode {
     pub fn window_title(self) -> &'static str {
         match self {
@@ -62,6 +70,7 @@ pub(super) struct AppState {
 pub struct LinkInterceptorApp {
     state: AppState,
     main_window: RwSignal<Option<WindowId>>,
+    main_tab_request: RwSignal<Option<MainTab>>,
     next_intercept_id: RwSignal<u64>,
 }
 
@@ -101,6 +110,7 @@ impl LinkInterceptorApp {
                 registration_state: RwSignal::new(windows_integration::registration_state()),
             },
             main_window: RwSignal::new(None),
+            main_tab_request: RwSignal::new(None),
             next_intercept_id: RwSignal::new(1),
         }
     }
@@ -138,7 +148,7 @@ impl LinkInterceptorApp {
                         InterceptWindow::new(app_for_window.clone(), window_id, url).view()
                     } else {
                         app_for_window.main_window.set(Some(window_id));
-                        MainWindow::new(app_for_window.clone(), window_id).view()
+                        MainWindow::new(app_for_window.clone(), window_id, MainTab::History).view()
                     }
                 },
                 Some(config),
@@ -257,7 +267,12 @@ impl LinkInterceptorApp {
     }
 
     fn show_or_create_main_window(&self) {
+        self.show_or_create_main_window_tab(MainTab::History);
+    }
+
+    fn show_or_create_main_window_tab(&self, tab: MainTab) {
         if let Some(window_id) = self.main_window.get() {
+            self.main_tab_request.set(Some(tab));
             bring_window_to_front(window_id);
             return;
         }
@@ -270,7 +285,7 @@ impl LinkInterceptorApp {
                     bring_window_to_front(window_id);
                     focus_window();
                 }
-                MainWindow::new(app.clone(), window_id).view()
+                MainWindow::new(app.clone(), window_id, tab).view()
             },
             Some(window_config(AppMode::MainWindow)),
         );

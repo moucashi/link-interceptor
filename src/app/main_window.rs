@@ -1,4 +1,4 @@
-use super::LinkInterceptorApp;
+use super::{LinkInterceptorApp, MainTab};
 use crate::{
     models::{Config, CustomApp, DomainRule, FavoriteEntry, HistoryEntry},
     windows_integration::{self, RegistrationState},
@@ -16,19 +16,11 @@ use floem::{
     window::{WindowId, close_window},
 };
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tab {
-    History,
-    Favorites,
-    Registration,
-    Settings,
-}
-
 #[derive(Clone)]
 pub(super) struct MainWindow {
     app: LinkInterceptorApp,
     window_id: WindowId,
-    active_tab: RwSignal<Tab>,
+    active_tab: RwSignal<MainTab>,
     history_query: RwSignal<String>,
     favorites_query: RwSignal<String>,
     clear_history_confirmation: RwSignal<bool>,
@@ -41,13 +33,13 @@ pub(super) struct MainWindow {
 }
 
 impl MainWindow {
-    pub(super) fn new(app: LinkInterceptorApp, window_id: WindowId) -> Self {
+    pub(super) fn new(app: LinkInterceptorApp, window_id: WindowId, initial_tab: MainTab) -> Self {
         let new_custom_app = CustomApp::default();
         let new_domain_rule = DomainRule::default();
         Self {
             app,
             window_id,
-            active_tab: RwSignal::new(Tab::History),
+            active_tab: RwSignal::new(initial_tab),
             history_query: RwSignal::new(String::new()),
             favorites_query: RwSignal::new(String::new()),
             clear_history_confirmation: RwSignal::new(false),
@@ -65,19 +57,28 @@ impl MainWindow {
         let app = self.clone();
         let tab = self.active_tab;
         let content_app = self.clone();
+        create_effect({
+            let app = self.app.clone();
+            move |_| {
+                if let Some(requested_tab) = app.main_tab_request.get() {
+                    tab.set(requested_tab);
+                    app.main_tab_request.set(None);
+                }
+            }
+        });
         v_stack((
             h_stack((
-                tab_button("历史记录", tab, Tab::History),
-                tab_button("收藏", tab, Tab::Favorites),
-                tab_button("注册状态", tab, Tab::Registration),
-                tab_button("设置", tab, Tab::Settings),
+                tab_button("历史记录", tab, MainTab::History),
+                tab_button("收藏", tab, MainTab::Favorites),
+                tab_button("注册状态", tab, MainTab::Registration),
+                tab_button("设置", tab, MainTab::Settings),
             ))
             .style(|s| s.gap(8).padding(10)),
             dyn_view(move || match tab.get() {
-                Tab::History => content_app.history_view().into_any(),
-                Tab::Favorites => content_app.favorites_view().into_any(),
-                Tab::Registration => content_app.registration_view().into_any(),
-                Tab::Settings => content_app.settings_view().into_any(),
+                MainTab::History => content_app.history_view().into_any(),
+                MainTab::Favorites => content_app.favorites_view().into_any(),
+                MainTab::Registration => content_app.registration_view().into_any(),
+                MainTab::Settings => content_app.settings_view().into_any(),
             })
             .style(|s| {
                 s.flex_grow(1.0)
@@ -669,6 +670,10 @@ impl MainWindow {
     }
 }
 
-fn tab_button(label_text: &'static str, active_tab: RwSignal<Tab>, tab: Tab) -> impl IntoView {
+fn tab_button(
+    label_text: &'static str,
+    active_tab: RwSignal<MainTab>,
+    tab: MainTab,
+) -> impl IntoView {
     button(label(move || label_text.to_owned())).action(move || active_tab.set(tab))
 }

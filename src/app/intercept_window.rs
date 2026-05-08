@@ -137,7 +137,6 @@ impl InterceptWindow {
                 }),
             )
             .style(|s| s.flex_grow(1.0).min_height(64.0).width_full()),
-            text("主界面").style(|s| s.font_size(20.0)),
             h_stack((
                 main_tab_button("收藏", app.clone(), MainTab::Favorites),
                 main_tab_button("历史记录", app.clone(), MainTab::History),

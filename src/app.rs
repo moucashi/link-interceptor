@@ -45,7 +45,14 @@ impl AppMode {
     pub fn initial_size(self) -> Size {
         match self {
             Self::MainWindow => Size::new(1024.0, 720.0),
-            Self::InterceptWindow => Size::new(860.0, 560.0),
+            Self::InterceptWindow => Size::new(640.0, 380.0),
+        }
+    }
+
+    pub fn minimum_size(self) -> Size {
+        match self {
+            Self::MainWindow => Size::new(720.0, 520.0),
+            Self::InterceptWindow => Size::new(460.0, 320.0),
         }
     }
 }
@@ -444,7 +451,7 @@ impl LinkInterceptorApp {
                 )
                 .style(|s| s.flex_col().gap(6)),
             )
-            .style(|s| s.flex_grow(1.0).width_full()),
+            .style(|s| s.flex_grow(1.0).min_height(64.0).width_full()),
             label(move || {
                 let status = window_status.get();
                 if status.is_empty() {
@@ -461,6 +468,15 @@ impl LinkInterceptorApp {
                 close_window(window_id);
             },
         )
+        .on_resize(move |rect| {
+            let minimum_size = AppMode::InterceptWindow.minimum_size();
+            if rect.width() < minimum_size.width || rect.height() < minimum_size.height {
+                window_id.set_content_size(Size::new(
+                    rect.width().max(minimum_size.width),
+                    rect.height().max(minimum_size.height),
+                ));
+            }
+        })
         .style(|s| s.size_full().padding(14).gap(10).flex_col())
         .into_any()
     }

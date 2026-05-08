@@ -9,6 +9,7 @@ use floem::{
     keyboard::Key,
     prelude::*,
     reactive::{RwSignal, SignalGet, SignalUpdate},
+    taffy::style::FlexWrap,
     views::{
         button, dyn_stack, h_stack, label, labeled_checkbox, scroll, text, text_input, v_stack,
     },
@@ -99,15 +100,17 @@ impl InterceptWindow {
                             candidate.name.clone(),
                             format!("{:?}", candidate.kind),
                             candidate.command.clone(),
+                            candidate.reason.clone(),
                         )
                     },
                     {
                         let app = app.clone();
                         move |candidate: OpenCandidate| {
-                            let name = candidate.name.clone();
+                            let label = candidate_button_label(&candidate);
                             let enabled = candidate.available;
-                            h_stack((
-                                button(name).disabled(move || !enabled).action({
+                            button(label)
+                                .disabled(move || !enabled)
+                                .action({
                                     let app = app.clone();
                                     let candidate = candidate.clone();
                                     let window_status = window_status;
@@ -119,14 +122,18 @@ impl InterceptWindow {
                                             close_window(window_id);
                                         }
                                     }
-                                }),
-                                text(candidate_kind_label(candidate.kind).to_owned()),
-                            ))
-                            .style(|s| s.gap(8).items_center())
+                                })
+                                .style(|s| s.flex_shrink(0.0))
                         }
                     },
                 )
-                .style(|s| s.flex_col().gap(6)),
+                .style(|s| {
+                    s.flex_row()
+                        .flex_wrap(FlexWrap::Wrap)
+                        .gap(6)
+                        .width_full()
+                        .min_width(0.0)
+                }),
             )
             .style(|s| s.flex_grow(1.0).min_height(64.0).width_full()),
             label(move || {
@@ -147,6 +154,43 @@ impl InterceptWindow {
         )
         .style(|s| s.size_full().padding(14).gap(10).flex_col())
         .into_any()
+    }
+}
+
+fn candidate_button_label(candidate: &OpenCandidate) -> String {
+    let kind = candidate_kind_label(candidate.kind.clone());
+    let prefix = candidate_button_prefix(candidate, kind);
+    let name = candidate.name.trim();
+
+    if name.is_empty() || name == prefix {
+        prefix
+    } else {
+        format!("{prefix}：{name}")
+    }
+}
+
+fn candidate_button_prefix(candidate: &OpenCandidate, kind: &str) -> String {
+    match candidate.kind.clone() {
+        CandidateKind::Browser | CandidateKind::CustomApp | CandidateKind::ShellFallback => {
+            kind.to_owned()
+        }
+        CandidateKind::ProtocolHandler => candidate
+            .reason
+            .trim()
+            .strip_prefix("已注册的 ")
+            .and_then(|reason| reason.strip_suffix(" 协议处理程序"))
+            .map(|scheme| format!("{kind} · {scheme}"))
+            .unwrap_or_else(|| kind.to_owned()),
+        CandidateKind::DomainApp => {
+            let reason = candidate.reason.trim();
+            if let Some(pattern) = reason.strip_prefix("域名规则 ") {
+                format!("{kind} · {pattern}")
+            } else if let Some(domain) = reason.strip_prefix("Windows Apps for Websites 匹配 ") {
+                format!("{kind} · Apps for Websites · {domain}")
+            } else {
+                kind.to_owned()
+            }
+        }
     }
 }
 

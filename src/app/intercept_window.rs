@@ -6,7 +6,7 @@ use crate::{
 };
 use floem::{
     Clipboard, IntoView,
-    keyboard::Key,
+    keyboard::{Key, NamedKey},
     prelude::*,
     reactive::{RwSignal, SignalGet, SignalUpdate},
     taffy::style::FlexWrap,
@@ -160,6 +160,9 @@ impl InterceptWindow {
                 close_window(window_id);
             },
         )
+        .on_key_down(Key::Named(NamedKey::Escape), |_| true, move |_| {
+            close_window(window_id);
+        })
         .style(|s| s.size_full().padding(14).gap(10).flex_col())
         .into_any()
     }

@@ -137,6 +137,7 @@ impl InterceptWindow {
                 }),
             )
             .style(|s| s.flex_grow(1.0).min_height(64.0).width_full()),
+            text("打开其他").style(|s| s.font_size(20.0)),
             h_stack((
                 main_tab_button("收藏", app.clone(), MainTab::Favorites),
                 main_tab_button("历史记录", app.clone(), MainTab::History),
@@ -160,9 +161,13 @@ impl InterceptWindow {
                 close_window(window_id);
             },
         )
-        .on_key_down(Key::Named(NamedKey::Escape), |_| true, move |_| {
-            close_window(window_id);
-        })
+        .on_key_down(
+            Key::Named(NamedKey::Escape),
+            |_| true,
+            move |_| {
+                close_window(window_id);
+            },
+        )
         .style(|s| interactive_cursor_style(s.size_full().padding(14).gap(10).flex_col()))
         .into_any()
     }

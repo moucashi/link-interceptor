@@ -1,5 +1,6 @@
 use crate::{
     models::{CandidateKind, Config, OpenCandidate},
+    rules::{normalize_protocol_scheme, normalize_root_domain},
     windows_integration,
 };
 use url::Url;
@@ -140,39 +141,24 @@ fn matching_protocol_rules<'a>(
     config: &'a Config,
     scheme: &str,
 ) -> Vec<&'a crate::models::ProtocolRule> {
-    let scheme = scheme.trim().to_ascii_lowercase();
+    let scheme = normalize_protocol_scheme(scheme).unwrap_or_default();
     if scheme.is_empty() {
         return Vec::new();
     }
     config
         .protocol_rules
         .iter()
-        .filter(|rule| rule.scheme.trim().eq_ignore_ascii_case(&scheme))
+        .filter(|rule| {
+            normalize_protocol_scheme(&rule.scheme)
+                .is_some_and(|rule_scheme| rule_scheme.eq_ignore_ascii_case(&scheme))
+        })
         .collect()
 }
 
 pub fn domain_matches(pattern: &str, domain: &str) -> bool {
-    root_domain(pattern).is_some_and(|pattern| {
-        root_domain(domain).is_some_and(|domain| pattern.eq_ignore_ascii_case(&domain))
+    normalize_root_domain(pattern).is_some_and(|pattern| {
+        normalize_root_domain(domain).is_some_and(|domain| pattern.eq_ignore_ascii_case(&domain))
     })
-}
-
-pub fn root_domain(domain: &str) -> Option<String> {
-    let domain = domain
-        .trim()
-        .trim_end_matches('.')
-        .trim_start_matches("*.")
-        .to_ascii_lowercase();
-    let mut labels = domain
-        .split('.')
-        .filter(|label| !label.is_empty())
-        .collect::<Vec<_>>();
-    if labels.len() < 2 {
-        return None;
-    }
-    let last = labels.pop()?;
-    let second_last = labels.pop()?;
-    Some(format!("{second_last}.{last}"))
 }
 
 fn deduplicate(candidates: Vec<OpenCandidate>) -> Vec<OpenCandidate> {

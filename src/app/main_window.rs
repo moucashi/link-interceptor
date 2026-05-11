@@ -1,6 +1,6 @@
-use super::{LinkInterceptorApp, MainTab};
+use super::{opening_rules::OpeningRulesPanel, LinkInterceptorApp, MainTab};
 use crate::{
-    models::{Config, CustomApp, DomainRule, FavoriteEntry, HistoryEntry, ProtocolRule},
+    models::{Config, FavoriteEntry, HistoryEntry},
     ui_style::interactive_cursor_style,
     windows_integration::{self, RegistrationState},
 };
@@ -26,20 +26,12 @@ pub(super) struct MainWindow {
     favorites_query: RwSignal<String>,
     clear_history_confirmation: RwSignal<bool>,
     reset_config_confirmation: RwSignal<bool>,
-    new_custom_name: RwSignal<String>,
-    new_custom_executable: RwSignal<String>,
-    new_custom_args: RwSignal<String>,
-    new_domain_pattern: RwSignal<String>,
-    new_domain_app_name: RwSignal<String>,
-    new_protocol_scheme: RwSignal<String>,
-    new_protocol_app_name: RwSignal<String>,
+    opening_rules: OpeningRulesPanel,
 }
 
 impl MainWindow {
     pub(super) fn new(app: LinkInterceptorApp, window_id: WindowId, initial_tab: MainTab) -> Self {
-        let new_custom_app = CustomApp::default();
-        let new_domain_rule = DomainRule::default();
-        let new_protocol_rule = ProtocolRule::default();
+        let opening_rules = OpeningRulesPanel::new(app.clone());
         Self {
             app,
             window_id,
@@ -48,13 +40,7 @@ impl MainWindow {
             favorites_query: RwSignal::new(String::new()),
             clear_history_confirmation: RwSignal::new(false),
             reset_config_confirmation: RwSignal::new(false),
-            new_custom_name: RwSignal::new(new_custom_app.name),
-            new_custom_executable: RwSignal::new(new_custom_app.executable),
-            new_custom_args: RwSignal::new(new_custom_app.args_template),
-            new_domain_pattern: RwSignal::new(new_domain_rule.pattern),
-            new_domain_app_name: RwSignal::new(new_domain_rule.app_name),
-            new_protocol_scheme: RwSignal::new(new_protocol_rule.scheme),
-            new_protocol_app_name: RwSignal::new(new_protocol_rule.app_name),
+            opening_rules,
         }
     }
 
@@ -451,7 +437,7 @@ impl MainWindow {
                         app.app.persist_config();
                     }
                 }),
-                self.opening_rules_view(),
+                self.opening_rules.view(),
                 h_stack((
                     button("保存设置").action({
                         let app = self.clone();
@@ -477,17 +463,7 @@ impl MainWindow {
                                     let app = app.clone();
                                     move || {
                                         app.app.state.config.set(Config::default());
-                                        let default_app = CustomApp::default();
-                                        let default_rule = DomainRule::default();
-                                        let default_protocol_rule = ProtocolRule::default();
-                                        app.new_custom_name.set(default_app.name);
-                                        app.new_custom_executable.set(default_app.executable);
-                                        app.new_custom_args.set(default_app.args_template);
-                                        app.new_domain_pattern.set(default_rule.pattern);
-                                        app.new_domain_app_name.set(default_rule.app_name);
-                                        app.new_protocol_scheme.set(default_protocol_rule.scheme);
-                                        app.new_protocol_app_name
-                                            .set(default_protocol_rule.app_name);
+                                        app.opening_rules.reset();
                                         app.app.persist_config();
                                         app.reset_config_confirmation.set(false);
                                         app.app.state.status.set("已恢复默认设置".to_owned());
@@ -505,272 +481,6 @@ impl MainWindow {
             .style(|s| s.width_full().padding(14).gap(10).flex_col()),
         )
         .style(|s| s.size_full())
-    }
-
-    fn opening_rules_view(&self) -> impl IntoView + 'static {
-        v_stack((
-            text("自定义应用").style(|s| s.font_size(20.0)),
-            self.custom_apps_view(),
-            text("添加自定义应用").style(|s| s.font_size(16.0)),
-            h_stack((
-                text("名称"),
-                text_input(self.new_custom_name).style(|s| s.width(150.0)),
-                text("可执行文件"),
-                text_input(self.new_custom_executable).style(|s| s.width(240.0)),
-                text("参数"),
-                text_input(self.new_custom_args).style(|s| s.width(180.0)),
-                button("添加").action({
-                    let app = self.clone();
-                    move || {
-                        let name = app.new_custom_name.get();
-                        if name.trim().is_empty() {
-                            return;
-                        }
-                        app.app.state.config.update(|config| {
-                            config.custom_apps.push(CustomApp {
-                                name,
-                                executable: app.new_custom_executable.get(),
-                                args_template: app.new_custom_args.get(),
-                            });
-                        });
-                        let default = CustomApp::default();
-                        app.new_custom_name.set(default.name);
-                        app.new_custom_executable.set(default.executable);
-                        app.new_custom_args.set(default.args_template);
-                        app.app.persist_config();
-                    }
-                }),
-            ))
-            .style(|s| s.gap(6).items_center()),
-            text("域名规则").style(|s| s.font_size(20.0)),
-            self.domain_rules_view(),
-            text("添加域名规则").style(|s| s.font_size(16.0)),
-            h_stack((
-                text("根域名"),
-                text_input(self.new_domain_pattern).style(|s| s.width(180.0)),
-                text("自定义应用"),
-                text_input(self.new_domain_app_name).style(|s| s.width(180.0)),
-                button("添加").action({
-                    let app = self.clone();
-                    move || {
-                        let pattern = app.new_domain_pattern.get();
-                        if pattern.trim().is_empty() {
-                            return;
-                        }
-                        app.app.state.config.update(|config| {
-                            config.domain_rules.push(DomainRule {
-                                pattern,
-                                app_name: app.new_domain_app_name.get(),
-                            });
-                        });
-                        let default = DomainRule::default();
-                        app.new_domain_pattern.set(default.pattern);
-                        app.new_domain_app_name.set(default.app_name);
-                        app.app.persist_config();
-                    }
-                }),
-            ))
-            .style(|s| s.gap(6).items_center()),
-            text("协议规则").style(|s| s.font_size(20.0)),
-            self.protocol_rules_view(),
-            text("添加协议规则").style(|s| s.font_size(16.0)),
-            h_stack((
-                text("协议"),
-                text_input(self.new_protocol_scheme).style(|s| s.width(120.0)),
-                text("自定义应用"),
-                text_input(self.new_protocol_app_name).style(|s| s.width(180.0)),
-                button("添加").action({
-                    let app = self.clone();
-                    move || {
-                        let scheme = app.new_protocol_scheme.get();
-                        if scheme.trim().is_empty() {
-                            return;
-                        }
-                        app.app.state.config.update(|config| {
-                            config.protocol_rules.push(ProtocolRule {
-                                scheme,
-                                app_name: app.new_protocol_app_name.get(),
-                            });
-                        });
-                        let default = ProtocolRule::default();
-                        app.new_protocol_scheme.set(default.scheme);
-                        app.new_protocol_app_name.set(default.app_name);
-                        app.app.persist_config();
-                    }
-                }),
-            ))
-            .style(|s| s.gap(6).items_center()),
-        ))
-        .style(|s| s.gap(10).flex_col())
-    }
-
-    fn custom_apps_view(&self) -> impl IntoView + 'static {
-        let app = self.clone();
-        dyn_stack(
-            move || {
-                app.app
-                    .state
-                    .config
-                    .get()
-                    .custom_apps
-                    .into_iter()
-                    .enumerate()
-                    .collect::<Vec<_>>()
-            },
-            |(index, app)| (*index, app.name.clone()),
-            {
-                let state = self.clone();
-                move |(index, custom_app): (usize, CustomApp)| {
-                    let name = RwSignal::new(custom_app.name);
-                    let executable = RwSignal::new(custom_app.executable);
-                    let args_template = RwSignal::new(custom_app.args_template);
-                    h_stack((
-                        text("名称"),
-                        text_input(name).style(|s| s.width(140.0)),
-                        text("可执行文件"),
-                        text_input(executable).style(|s| s.width(220.0)),
-                        text("参数"),
-                        text_input(args_template).style(|s| s.width(160.0)),
-                        button("保存").action({
-                            let state = state.clone();
-                            move || {
-                                state.app.state.config.update(|config| {
-                                    if let Some(app) = config.custom_apps.get_mut(index) {
-                                        app.name = name.get();
-                                        app.executable = executable.get();
-                                        app.args_template = args_template.get();
-                                    }
-                                });
-                                state.app.persist_config();
-                            }
-                        }),
-                        button("移除").action({
-                            let state = state.clone();
-                            move || {
-                                state.app.state.config.update(|config| {
-                                    if index < config.custom_apps.len() {
-                                        config.custom_apps.remove(index);
-                                    }
-                                });
-                                state.app.persist_config();
-                            }
-                        }),
-                    ))
-                    .style(|s| s.gap(6).items_center().padding(4))
-                }
-            },
-        )
-        .style(|s| s.flex_col().gap(4))
-    }
-
-    fn domain_rules_view(&self) -> impl IntoView + 'static {
-        let app = self.clone();
-        dyn_stack(
-            move || {
-                app.app
-                    .state
-                    .config
-                    .get()
-                    .domain_rules
-                    .into_iter()
-                    .enumerate()
-                    .collect::<Vec<_>>()
-            },
-            |(index, rule)| (*index, rule.pattern.clone(), rule.app_name.clone()),
-            {
-                let state = self.clone();
-                move |(index, rule): (usize, DomainRule)| {
-                    let pattern = RwSignal::new(rule.pattern);
-                    let app_name = RwSignal::new(rule.app_name);
-                    h_stack((
-                        text("根域名"),
-                        text_input(pattern).style(|s| s.width(180.0)),
-                        text("自定义应用"),
-                        text_input(app_name).style(|s| s.width(180.0)),
-                        button("保存").action({
-                            let state = state.clone();
-                            move || {
-                                state.app.state.config.update(|config| {
-                                    if let Some(rule) = config.domain_rules.get_mut(index) {
-                                        rule.pattern = pattern.get();
-                                        rule.app_name = app_name.get();
-                                    }
-                                });
-                                state.app.persist_config();
-                            }
-                        }),
-                        button("移除").action({
-                            let state = state.clone();
-                            move || {
-                                state.app.state.config.update(|config| {
-                                    if index < config.domain_rules.len() {
-                                        config.domain_rules.remove(index);
-                                    }
-                                });
-                                state.app.persist_config();
-                            }
-                        }),
-                    ))
-                    .style(|s| s.gap(6).items_center().padding(4))
-                }
-            },
-        )
-        .style(|s| s.flex_col().gap(4))
-    }
-
-    fn protocol_rules_view(&self) -> impl IntoView + 'static {
-        let app = self.clone();
-        dyn_stack(
-            move || {
-                app.app
-                    .state
-                    .config
-                    .get()
-                    .protocol_rules
-                    .into_iter()
-                    .enumerate()
-                    .collect::<Vec<_>>()
-            },
-            |(index, rule)| (*index, rule.scheme.clone(), rule.app_name.clone()),
-            {
-                let state = self.clone();
-                move |(index, rule): (usize, ProtocolRule)| {
-                    let scheme = RwSignal::new(rule.scheme);
-                    let app_name = RwSignal::new(rule.app_name);
-                    h_stack((
-                        text("协议"),
-                        text_input(scheme).style(|s| s.width(120.0)),
-                        text("自定义应用"),
-                        text_input(app_name).style(|s| s.width(180.0)),
-                        button("保存").action({
-                            let state = state.clone();
-                            move || {
-                                state.app.state.config.update(|config| {
-                                    if let Some(rule) = config.protocol_rules.get_mut(index) {
-                                        rule.scheme = scheme.get();
-                                        rule.app_name = app_name.get();
-                                    }
-                                });
-                                state.app.persist_config();
-                            }
-                        }),
-                        button("移除").action({
-                            let state = state.clone();
-                            move || {
-                                state.app.state.config.update(|config| {
-                                    if index < config.protocol_rules.len() {
-                                        config.protocol_rules.remove(index);
-                                    }
-                                });
-                                state.app.persist_config();
-                            }
-                        }),
-                    ))
-                    .style(|s| s.gap(6).items_center().padding(4))
-                }
-            },
-        )
-        .style(|s| s.flex_col().gap(4))
     }
 }
 

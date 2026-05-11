@@ -5,6 +5,7 @@ mod candidates;
 mod ipc;
 mod models;
 mod native_window;
+mod rules;
 mod storage;
 mod ui_style;
 mod windows_integration;

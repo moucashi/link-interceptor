@@ -5,16 +5,17 @@ use crate::{
     windows_integration::{self, RegistrationState},
 };
 use floem::{
-    Urgency, WindowIdExt,
     action::focus_window,
     ext_event::create_signal_from_channel,
     peniko::kurbo::Size,
-    reactive::{RwSignal, SignalGet, SignalUpdate, create_effect, untrack},
-    window::{WindowConfig, WindowId, new_window},
+    reactive::{create_effect, untrack, RwSignal, SignalGet, SignalUpdate},
+    window::{new_window, WindowConfig, WindowId},
+    Urgency, WindowIdExt,
 };
 
 mod intercept_window;
 mod main_window;
+mod opening_rules;
 
 use intercept_window::InterceptWindow;
 use main_window::MainWindow;

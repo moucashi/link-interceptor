@@ -1,19 +1,22 @@
-use super::LinkInterceptorApp;
+use super::{bring_window_to_front, LinkInterceptorApp};
 use crate::{
     models::{Config, CustomApp, DomainRule, ProtocolRule},
     rules::{normalize_protocol_scheme, normalize_root_domain},
 };
 use floem::{
+    action::focus_window,
+    keyboard::{Key, NamedKey},
+    peniko::kurbo::Size,
     peniko::Color,
     prelude::*,
     reactive::{RwSignal, SignalGet, SignalUpdate},
     views::{button, dropdown::Dropdown, dyn_stack, dyn_view, h_stack, text, text_input, v_stack},
+    window::{close_window, new_window, WindowConfig, WindowId},
     IntoView,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OpeningRuleEditor {
-    None,
     AddCustomApp,
     EditCustomApp(usize),
     AddDomainRule,
@@ -22,17 +25,42 @@ enum OpeningRuleEditor {
     EditProtocolRule(usize),
 }
 
+impl OpeningRuleEditor {
+    fn title(self) -> &'static str {
+        match self {
+            Self::AddCustomApp => "新增自定义打开目标",
+            Self::EditCustomApp(_) => "编辑自定义打开目标",
+            Self::AddDomainRule => "新增根域名规则",
+            Self::EditDomainRule(_) => "编辑根域名规则",
+            Self::AddProtocolRule => "新增 URI 协议规则",
+            Self::EditProtocolRule(_) => "编辑 URI 协议规则",
+        }
+    }
+
+    fn window_size(self) -> Size {
+        match self {
+            Self::AddCustomApp | Self::EditCustomApp(_) => Size::new(600.0, 250.0),
+            Self::AddDomainRule
+            | Self::EditDomainRule(_)
+            | Self::AddProtocolRule
+            | Self::EditProtocolRule(_) => Size::new(560.0, 220.0),
+        }
+    }
+
+    fn minimum_size(self) -> Size {
+        match self {
+            Self::AddCustomApp | Self::EditCustomApp(_) => Size::new(520.0, 230.0),
+            Self::AddDomainRule
+            | Self::EditDomainRule(_)
+            | Self::AddProtocolRule
+            | Self::EditProtocolRule(_) => Size::new(480.0, 210.0),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct OpeningRulesPanel {
     app: LinkInterceptorApp,
-    editor: RwSignal<OpeningRuleEditor>,
-    custom_name: RwSignal<String>,
-    custom_executable: RwSignal<String>,
-    custom_args: RwSignal<String>,
-    domain_pattern: RwSignal<String>,
-    domain_app_name: RwSignal<String>,
-    protocol_scheme: RwSignal<String>,
-    protocol_app_name: RwSignal<String>,
     error: RwSignal<String>,
     delete_custom_confirmation: RwSignal<Option<usize>>,
 }
@@ -41,30 +69,14 @@ impl OpeningRulesPanel {
     pub(super) fn new(app: LinkInterceptorApp) -> Self {
         Self {
             app,
-            editor: RwSignal::new(OpeningRuleEditor::None),
-            custom_name: RwSignal::new(String::new()),
-            custom_executable: RwSignal::new(String::new()),
-            custom_args: RwSignal::new("{url}".to_owned()),
-            domain_pattern: RwSignal::new(String::new()),
-            domain_app_name: RwSignal::new(String::new()),
-            protocol_scheme: RwSignal::new(String::new()),
-            protocol_app_name: RwSignal::new(String::new()),
             error: RwSignal::new(String::new()),
             delete_custom_confirmation: RwSignal::new(None),
         }
     }
 
     pub(super) fn reset(&self) {
-        self.editor.set(OpeningRuleEditor::None);
         self.delete_custom_confirmation.set(None);
         self.error.set(String::new());
-        self.custom_name.set(String::new());
-        self.custom_executable.set(String::new());
-        self.custom_args.set("{url}".to_owned());
-        self.domain_pattern.set(String::new());
-        self.domain_app_name.set(String::new());
-        self.protocol_scheme.set(String::new());
-        self.protocol_app_name.set(String::new());
     }
 
     pub(super) fn view(&self) -> impl IntoView + 'static {
@@ -104,7 +116,6 @@ impl OpeningRulesPanel {
                 }
             }),
             self.delete_custom_confirmation_view(),
-            self.custom_app_editor_view(),
         ))
         .style(|s| section_style(s))
     }
@@ -143,7 +154,6 @@ impl OpeningRulesPanel {
                     }
                 }
             }),
-            self.domain_rule_editor_view(),
         ))
         .style(|s| section_style(s))
     }
@@ -182,7 +192,6 @@ impl OpeningRulesPanel {
                     }
                 }
             }),
-            self.protocol_rule_editor_view(),
         ))
         .style(|s| section_style(s))
     }
@@ -318,142 +327,6 @@ impl OpeningRulesPanel {
         .into_any()
     }
 
-    fn custom_app_editor_view(&self) -> impl IntoView + 'static {
-        let panel = self.clone();
-        dyn_view(move || match panel.editor.get() {
-            OpeningRuleEditor::AddCustomApp => panel.custom_app_editor(None).into_any(),
-            OpeningRuleEditor::EditCustomApp(index) => {
-                panel.custom_app_editor(Some(index)).into_any()
-            }
-            _ => text("").into_any(),
-        })
-    }
-
-    fn domain_rule_editor_view(&self) -> impl IntoView + 'static {
-        let panel = self.clone();
-        dyn_view(move || match panel.editor.get() {
-            OpeningRuleEditor::AddDomainRule => panel.domain_rule_editor(None).into_any(),
-            OpeningRuleEditor::EditDomainRule(index) => {
-                panel.domain_rule_editor(Some(index)).into_any()
-            }
-            _ => text("").into_any(),
-        })
-    }
-
-    fn protocol_rule_editor_view(&self) -> impl IntoView + 'static {
-        let panel = self.clone();
-        dyn_view(move || match panel.editor.get() {
-            OpeningRuleEditor::AddProtocolRule => panel.protocol_rule_editor(None).into_any(),
-            OpeningRuleEditor::EditProtocolRule(index) => {
-                panel.protocol_rule_editor(Some(index)).into_any()
-            }
-            _ => text("").into_any(),
-        })
-    }
-
-    fn custom_app_editor(&self, index: Option<usize>) -> impl IntoView + 'static {
-        v_stack((
-            text(if index.is_some() {
-                "编辑自定义打开目标"
-            } else {
-                "新增自定义打开目标"
-            })
-            .style(|s| s.font_size(18.0)),
-            form_row("名称", text_input(self.custom_name).style(input_style)),
-            form_row(
-                "可执行文件",
-                text_input(self.custom_executable).style(input_style),
-            ),
-            form_row("参数模板", text_input(self.custom_args).style(input_style)),
-            h_stack((
-                button("取消").action({
-                    let panel = self.clone();
-                    move || panel.cancel_editor()
-                }),
-                button("保存").action({
-                    let panel = self.clone();
-                    move || panel.save_custom_app(index)
-                }),
-            ))
-            .style(|s| s.gap(8)),
-        ))
-        .style(|s| editor_style(s))
-    }
-
-    fn domain_rule_editor(&self, index: Option<usize>) -> impl IntoView + 'static {
-        v_stack((
-            text(if index.is_some() {
-                "编辑根域名规则"
-            } else {
-                "新增根域名规则"
-            })
-            .style(|s| s.font_size(18.0)),
-            form_row("根域名", text_input(self.domain_pattern).style(input_style)),
-            self.app_dropdown_row("自定义应用", self.domain_app_name),
-            h_stack((
-                button("取消").action({
-                    let panel = self.clone();
-                    move || panel.cancel_editor()
-                }),
-                button("保存").action({
-                    let panel = self.clone();
-                    move || panel.save_domain_rule(index)
-                }),
-            ))
-            .style(|s| s.gap(8)),
-        ))
-        .style(|s| editor_style(s))
-    }
-
-    fn protocol_rule_editor(&self, index: Option<usize>) -> impl IntoView + 'static {
-        v_stack((
-            text(if index.is_some() {
-                "编辑 URI 协议规则"
-            } else {
-                "新增 URI 协议规则"
-            })
-            .style(|s| s.font_size(18.0)),
-            form_row("协议", text_input(self.protocol_scheme).style(input_style)),
-            self.app_dropdown_row("自定义应用", self.protocol_app_name),
-            h_stack((
-                button("取消").action({
-                    let panel = self.clone();
-                    move || panel.cancel_editor()
-                }),
-                button("保存").action({
-                    let panel = self.clone();
-                    move || panel.save_protocol_rule(index)
-                }),
-            ))
-            .style(|s| s.gap(8)),
-        ))
-        .style(|s| editor_style(s))
-    }
-
-    fn app_dropdown_row(
-        &self,
-        label_text: &'static str,
-        selected: RwSignal<String>,
-    ) -> impl IntoView + 'static {
-        h_stack((
-            text(label_text).style(|s| s.width(90.0).flex_shrink(0.0)),
-            dyn_view({
-                let panel = self.clone();
-                move || {
-                    let app_names = panel.app_names();
-                    if app_names.is_empty() {
-                        text("请先新增自定义打开目标").into_any()
-                    } else {
-                        Dropdown::new_rw(selected, app_names)
-                            .style(|s| s.width(260.0).min_width(160.0))
-                            .into_any()
-                    }
-                }
-            }),
-        ))
-        .style(|s| s.gap(8).items_center().width_full())
-    }
-
     fn error_view(&self) -> impl IntoView + 'static {
         let panel = self.clone();
         dyn_view(move || {
@@ -501,84 +374,394 @@ impl OpeningRulesPanel {
     fn begin_add_custom_app(&self) {
         self.error.set(String::new());
         self.delete_custom_confirmation.set(None);
-        self.custom_name.set(String::new());
-        self.custom_executable.set(String::new());
-        self.custom_args.set("{url}".to_owned());
-        self.editor.set(OpeningRuleEditor::AddCustomApp);
+        self.open_editor_window(OpeningRuleEditor::AddCustomApp);
     }
 
     fn begin_edit_custom_app(&self, index: usize) {
         let config = self.app.state.config.get();
-        let Some(app) = config.custom_apps.get(index) else {
+        if config.custom_apps.get(index).is_none() {
             self.set_error("要编辑的自定义打开目标不存在");
             return;
-        };
+        }
 
         self.error.set(String::new());
         self.delete_custom_confirmation.set(None);
-        self.custom_name.set(app.name.clone());
-        self.custom_executable.set(app.executable.clone());
-        self.custom_args.set(app.args_template.clone());
-        self.editor.set(OpeningRuleEditor::EditCustomApp(index));
+        self.open_editor_window(OpeningRuleEditor::EditCustomApp(index));
     }
 
     fn begin_add_domain_rule(&self) {
-        let Some(app_name) = self.first_app_name() else {
+        if self.first_app_name().is_none() {
             self.set_error("请先新增自定义打开目标");
             return;
-        };
+        }
 
         self.error.set(String::new());
         self.delete_custom_confirmation.set(None);
-        self.domain_pattern.set(String::new());
-        self.domain_app_name.set(app_name);
-        self.editor.set(OpeningRuleEditor::AddDomainRule);
+        self.open_editor_window(OpeningRuleEditor::AddDomainRule);
     }
 
     fn begin_edit_domain_rule(&self, index: usize) {
         let config = self.app.state.config.get();
-        let Some(rule) = config.domain_rules.get(index) else {
+        if config.domain_rules.get(index).is_none() {
             self.set_error("要编辑的根域名规则不存在");
             return;
-        };
+        }
 
         self.error.set(String::new());
         self.delete_custom_confirmation.set(None);
-        self.domain_pattern.set(rule.pattern.clone());
-        self.domain_app_name.set(rule.app_name.clone());
-        self.editor.set(OpeningRuleEditor::EditDomainRule(index));
+        self.open_editor_window(OpeningRuleEditor::EditDomainRule(index));
     }
 
     fn begin_add_protocol_rule(&self) {
-        let Some(app_name) = self.first_app_name() else {
+        if self.first_app_name().is_none() {
             self.set_error("请先新增自定义打开目标");
             return;
-        };
+        }
 
         self.error.set(String::new());
         self.delete_custom_confirmation.set(None);
-        self.protocol_scheme.set(String::new());
-        self.protocol_app_name.set(app_name);
-        self.editor.set(OpeningRuleEditor::AddProtocolRule);
+        self.open_editor_window(OpeningRuleEditor::AddProtocolRule);
     }
 
     fn begin_edit_protocol_rule(&self, index: usize) {
         let config = self.app.state.config.get();
-        let Some(rule) = config.protocol_rules.get(index) else {
+        if config.protocol_rules.get(index).is_none() {
             self.set_error("要编辑的 URI 协议规则不存在");
             return;
-        };
+        }
 
         self.error.set(String::new());
         self.delete_custom_confirmation.set(None);
-        self.protocol_scheme.set(rule.scheme.clone());
-        self.protocol_app_name.set(rule.app_name.clone());
-        self.editor.set(OpeningRuleEditor::EditProtocolRule(index));
+        self.open_editor_window(OpeningRuleEditor::EditProtocolRule(index));
     }
 
-    fn cancel_editor(&self) {
-        self.editor.set(OpeningRuleEditor::None);
+    fn open_editor_window(&self, editor: OpeningRuleEditor) {
+        let app = self.app.clone();
+        new_window(
+            move |window_id| {
+                if app.state.config.get().bring_new_windows_to_front {
+                    bring_window_to_front(window_id);
+                    focus_window();
+                }
+                OpeningRuleEditorWindow::new(app.clone(), window_id, editor).view()
+            },
+            Some(editor_window_config(editor)),
+        );
+    }
+
+    fn request_delete_custom_app(&self, index: usize) {
         self.error.set(String::new());
+        let config = self.app.state.config.get();
+        let Some(app) = config.custom_apps.get(index) else {
+            self.set_error("要删除的自定义打开目标不存在");
+            return;
+        };
+
+        if custom_app_reference_count(&config, &app.name) > 0 {
+            self.delete_custom_confirmation.set(Some(index));
+        } else {
+            self.confirm_delete_custom_app(index);
+        }
+    }
+
+    fn confirm_delete_custom_app(&self, index: usize) {
+        let mut deleted = false;
+        self.app.state.config.update(|config| {
+            if index < config.custom_apps.len() {
+                let name = config.custom_apps.remove(index).name;
+                config
+                    .domain_rules
+                    .retain(|rule| !rule.app_name.eq_ignore_ascii_case(&name));
+                config
+                    .protocol_rules
+                    .retain(|rule| !rule.app_name.eq_ignore_ascii_case(&name));
+                deleted = true;
+            }
+        });
+
+        self.delete_custom_confirmation.set(None);
+        if deleted {
+            self.app.persist_config();
+            self.app.state.status.set("自定义打开目标已删除".to_owned());
+        } else {
+            self.set_error("要删除的自定义打开目标不存在");
+        }
+    }
+
+    fn delete_domain_rule(&self, index: usize) {
+        let mut deleted = false;
+        self.app.state.config.update(|config| {
+            if index < config.domain_rules.len() {
+                config.domain_rules.remove(index);
+                deleted = true;
+            }
+        });
+        if deleted {
+            self.app.persist_config();
+            self.app.state.status.set("根域名规则已删除".to_owned());
+        } else {
+            self.set_error("要删除的根域名规则不存在");
+        }
+    }
+
+    fn delete_protocol_rule(&self, index: usize) {
+        let mut deleted = false;
+        self.app.state.config.update(|config| {
+            if index < config.protocol_rules.len() {
+                config.protocol_rules.remove(index);
+                deleted = true;
+            }
+        });
+        if deleted {
+            self.app.persist_config();
+            self.app.state.status.set("URI 协议规则已删除".to_owned());
+        } else {
+            self.set_error("要删除的 URI 协议规则不存在");
+        }
+    }
+
+    fn first_app_name(&self) -> Option<String> {
+        self.app
+            .state
+            .config
+            .get()
+            .custom_apps
+            .first()
+            .map(|app| app.name.clone())
+    }
+
+    fn set_error(&self, message: impl Into<String>) {
+        let message = message.into();
+        self.error.set(message.clone());
+        self.app.state.status.set(message);
+    }
+}
+
+#[derive(Clone)]
+struct OpeningRuleEditorWindow {
+    app: LinkInterceptorApp,
+    window_id: WindowId,
+    editor: OpeningRuleEditor,
+    custom_name: RwSignal<String>,
+    custom_executable: RwSignal<String>,
+    custom_args: RwSignal<String>,
+    domain_pattern: RwSignal<String>,
+    domain_app_name: RwSignal<String>,
+    protocol_scheme: RwSignal<String>,
+    protocol_app_name: RwSignal<String>,
+    error: RwSignal<String>,
+}
+
+impl OpeningRuleEditorWindow {
+    fn new(app: LinkInterceptorApp, window_id: WindowId, editor: OpeningRuleEditor) -> Self {
+        crate::native_window::set_minimum_content_size(window_id, editor.minimum_size());
+        let config = app.state.config.get();
+        let mut custom_name = String::new();
+        let mut custom_executable = String::new();
+        let mut custom_args = "{url}".to_owned();
+        let mut domain_pattern = String::new();
+        let mut domain_app_name = config
+            .custom_apps
+            .first()
+            .map(|app| app.name.clone())
+            .unwrap_or_default();
+        let mut protocol_scheme = String::new();
+        let mut protocol_app_name = domain_app_name.clone();
+
+        match editor {
+            OpeningRuleEditor::EditCustomApp(index) => {
+                if let Some(app) = config.custom_apps.get(index) {
+                    custom_name = app.name.clone();
+                    custom_executable = app.executable.clone();
+                    custom_args = app.args_template.clone();
+                }
+            }
+            OpeningRuleEditor::EditDomainRule(index) => {
+                if let Some(rule) = config.domain_rules.get(index) {
+                    domain_pattern = rule.pattern.clone();
+                    domain_app_name = rule.app_name.clone();
+                }
+            }
+            OpeningRuleEditor::EditProtocolRule(index) => {
+                if let Some(rule) = config.protocol_rules.get(index) {
+                    protocol_scheme = rule.scheme.clone();
+                    protocol_app_name = rule.app_name.clone();
+                }
+            }
+            OpeningRuleEditor::AddCustomApp
+            | OpeningRuleEditor::AddDomainRule
+            | OpeningRuleEditor::AddProtocolRule => {}
+        }
+
+        Self {
+            app,
+            window_id,
+            editor,
+            custom_name: RwSignal::new(custom_name),
+            custom_executable: RwSignal::new(custom_executable),
+            custom_args: RwSignal::new(custom_args),
+            domain_pattern: RwSignal::new(domain_pattern),
+            domain_app_name: RwSignal::new(domain_app_name),
+            protocol_scheme: RwSignal::new(protocol_scheme),
+            protocol_app_name: RwSignal::new(protocol_app_name),
+            error: RwSignal::new(String::new()),
+        }
+    }
+
+    fn view(self) -> floem::AnyView {
+        let window_id = self.window_id;
+        let content = match self.editor {
+            OpeningRuleEditor::AddCustomApp => self.custom_app_editor(None).into_any(),
+            OpeningRuleEditor::EditCustomApp(index) => {
+                self.custom_app_editor(Some(index)).into_any()
+            }
+            OpeningRuleEditor::AddDomainRule => self.domain_rule_editor(None).into_any(),
+            OpeningRuleEditor::EditDomainRule(index) => {
+                self.domain_rule_editor(Some(index)).into_any()
+            }
+            OpeningRuleEditor::AddProtocolRule => self.protocol_rule_editor(None).into_any(),
+            OpeningRuleEditor::EditProtocolRule(index) => {
+                self.protocol_rule_editor(Some(index)).into_any()
+            }
+        };
+
+        content
+            .on_key_down(
+                Key::Character("w".into()),
+                |modifiers| modifiers.control(),
+                move |_| {
+                    close_window(window_id);
+                },
+            )
+            .on_key_down(
+                Key::Named(NamedKey::Escape),
+                |_| true,
+                move |_| {
+                    close_window(window_id);
+                },
+            )
+            .style(|s| s.size_full().padding(16))
+            .into_any()
+    }
+
+    fn custom_app_editor(&self, index: Option<usize>) -> impl IntoView + 'static {
+        v_stack((
+            text(if index.is_some() {
+                "编辑自定义打开目标"
+            } else {
+                "新增自定义打开目标"
+            })
+            .style(|s| s.font_size(18.0)),
+            form_row("名称", text_input(self.custom_name).style(input_style)),
+            form_row(
+                "可执行文件",
+                text_input(self.custom_executable).style(input_style),
+            ),
+            form_row("参数模板", text_input(self.custom_args).style(input_style)),
+            self.error_view(),
+            h_stack((
+                button("取消").action({
+                    let editor = self.clone();
+                    move || close_window(editor.window_id)
+                }),
+                button("保存").action({
+                    let editor = self.clone();
+                    move || editor.save_custom_app(index)
+                }),
+            ))
+            .style(|s| s.gap(8)),
+        ))
+        .style(editor_window_style)
+    }
+
+    fn domain_rule_editor(&self, index: Option<usize>) -> impl IntoView + 'static {
+        v_stack((
+            text(if index.is_some() {
+                "编辑根域名规则"
+            } else {
+                "新增根域名规则"
+            })
+            .style(|s| s.font_size(18.0)),
+            form_row("根域名", text_input(self.domain_pattern).style(input_style)),
+            self.app_dropdown_row("自定义应用", self.domain_app_name),
+            self.error_view(),
+            h_stack((
+                button("取消").action({
+                    let editor = self.clone();
+                    move || close_window(editor.window_id)
+                }),
+                button("保存").action({
+                    let editor = self.clone();
+                    move || editor.save_domain_rule(index)
+                }),
+            ))
+            .style(|s| s.gap(8)),
+        ))
+        .style(editor_window_style)
+    }
+
+    fn protocol_rule_editor(&self, index: Option<usize>) -> impl IntoView + 'static {
+        v_stack((
+            text(if index.is_some() {
+                "编辑 URI 协议规则"
+            } else {
+                "新增 URI 协议规则"
+            })
+            .style(|s| s.font_size(18.0)),
+            form_row("协议", text_input(self.protocol_scheme).style(input_style)),
+            self.app_dropdown_row("自定义应用", self.protocol_app_name),
+            self.error_view(),
+            h_stack((
+                button("取消").action({
+                    let editor = self.clone();
+                    move || close_window(editor.window_id)
+                }),
+                button("保存").action({
+                    let editor = self.clone();
+                    move || editor.save_protocol_rule(index)
+                }),
+            ))
+            .style(|s| s.gap(8)),
+        ))
+        .style(editor_window_style)
+    }
+
+    fn app_dropdown_row(
+        &self,
+        label_text: &'static str,
+        selected: RwSignal<String>,
+    ) -> impl IntoView + 'static {
+        h_stack((
+            text(label_text).style(|s| s.width(90.0).flex_shrink(0.0)),
+            dyn_view({
+                let editor = self.clone();
+                move || {
+                    let app_names = editor.app_names();
+                    if app_names.is_empty() {
+                        text("请先新增自定义打开目标").into_any()
+                    } else {
+                        Dropdown::new_rw(selected, app_names)
+                            .style(|s| s.width(260.0).min_width(160.0))
+                            .into_any()
+                    }
+                }
+            }),
+        ))
+        .style(|s| s.gap(8).items_center().width_full())
+    }
+
+    fn error_view(&self) -> impl IntoView + 'static {
+        let editor = self.clone();
+        dyn_view(move || {
+            let error = editor.error.get();
+            if error.is_empty() {
+                text("").into_any()
+            } else {
+                text(error)
+                    .style(|s| s.color(Color::rgb8(180, 40, 40)).font_size(12.0))
+                    .into_any()
+            }
+        })
     }
 
     fn save_custom_app(&self, index: Option<usize>) {
@@ -715,80 +898,6 @@ impl OpeningRulesPanel {
         self.finish_save("URI 协议规则已保存");
     }
 
-    fn request_delete_custom_app(&self, index: usize) {
-        self.editor.set(OpeningRuleEditor::None);
-        self.error.set(String::new());
-        let config = self.app.state.config.get();
-        let Some(app) = config.custom_apps.get(index) else {
-            self.set_error("要删除的自定义打开目标不存在");
-            return;
-        };
-
-        if custom_app_reference_count(&config, &app.name) > 0 {
-            self.delete_custom_confirmation.set(Some(index));
-        } else {
-            self.confirm_delete_custom_app(index);
-        }
-    }
-
-    fn confirm_delete_custom_app(&self, index: usize) {
-        let mut deleted = false;
-        self.app.state.config.update(|config| {
-            if index < config.custom_apps.len() {
-                let name = config.custom_apps.remove(index).name;
-                config
-                    .domain_rules
-                    .retain(|rule| !rule.app_name.eq_ignore_ascii_case(&name));
-                config
-                    .protocol_rules
-                    .retain(|rule| !rule.app_name.eq_ignore_ascii_case(&name));
-                deleted = true;
-            }
-        });
-
-        self.delete_custom_confirmation.set(None);
-        if deleted {
-            self.app.persist_config();
-            self.app.state.status.set("自定义打开目标已删除".to_owned());
-        } else {
-            self.set_error("要删除的自定义打开目标不存在");
-        }
-    }
-
-    fn delete_domain_rule(&self, index: usize) {
-        let mut deleted = false;
-        self.app.state.config.update(|config| {
-            if index < config.domain_rules.len() {
-                config.domain_rules.remove(index);
-                deleted = true;
-            }
-        });
-        if deleted {
-            self.editor.set(OpeningRuleEditor::None);
-            self.app.persist_config();
-            self.app.state.status.set("根域名规则已删除".to_owned());
-        } else {
-            self.set_error("要删除的根域名规则不存在");
-        }
-    }
-
-    fn delete_protocol_rule(&self, index: usize) {
-        let mut deleted = false;
-        self.app.state.config.update(|config| {
-            if index < config.protocol_rules.len() {
-                config.protocol_rules.remove(index);
-                deleted = true;
-            }
-        });
-        if deleted {
-            self.editor.set(OpeningRuleEditor::None);
-            self.app.persist_config();
-            self.app.state.status.set("URI 协议规则已删除".to_owned());
-        } else {
-            self.set_error("要删除的 URI 协议规则不存在");
-        }
-    }
-
     fn app_names(&self) -> Vec<String> {
         self.app
             .state
@@ -800,21 +909,11 @@ impl OpeningRulesPanel {
             .collect()
     }
 
-    fn first_app_name(&self) -> Option<String> {
-        self.app
-            .state
-            .config
-            .get()
-            .custom_apps
-            .first()
-            .map(|app| app.name.clone())
-    }
-
     fn finish_save(&self, status: &str) {
         self.error.set(String::new());
-        self.editor.set(OpeningRuleEditor::None);
         self.app.persist_config();
         self.app.state.status.set(status.to_owned());
+        close_window(self.window_id);
     }
 
     fn set_error(&self, message: impl Into<String>) {
@@ -940,28 +1039,40 @@ fn section_style(style: floem::style::Style) -> floem::style::Style {
     style
         .width_full()
         .gap(8)
-        .padding(10)
+        .padding(12)
         .flex_col()
-        .border_bottom(1.0)
+        .border(1.0)
+        .border_color(Color::rgb8(226, 226, 226))
+        .border_radius(8.0)
+        .background(Color::rgb8(250, 250, 250))
 }
 
 fn row_style(style: floem::style::Style) -> floem::style::Style {
     style
         .gap(8)
         .items_start()
-        .padding(6)
+        .padding(8)
         .width_full()
         .min_width(0.0)
+        .border(1.0)
+        .border_color(Color::rgb8(224, 224, 224))
+        .border_radius(6.0)
+        .background(Color::rgb8(255, 255, 255))
 }
 
-fn editor_style(style: floem::style::Style) -> floem::style::Style {
+fn editor_window_config(editor: OpeningRuleEditor) -> WindowConfig {
+    WindowConfig::default()
+        .title(editor.title())
+        .size(editor.window_size())
+}
+
+fn editor_window_style(style: floem::style::Style) -> floem::style::Style {
     style
-        .width_full()
+        .size_full()
         .gap(8)
-        .padding(10)
         .flex_col()
-        .border(1.0)
-        .border_radius(6.0)
+        .min_width(0.0)
+        .min_height(0.0)
 }
 
 #[cfg(test)]

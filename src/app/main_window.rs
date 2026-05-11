@@ -1,20 +1,20 @@
 use super::{LinkInterceptorApp, MainTab};
 use crate::{
-    models::{Config, CustomApp, DomainRule, FavoriteEntry, HistoryEntry},
+    models::{Config, CustomApp, DomainRule, FavoriteEntry, HistoryEntry, ProtocolRule},
     ui_style::interactive_cursor_style,
     windows_integration::{self, RegistrationState},
 };
 use floem::{
-    IntoView,
     keyboard::Key,
     peniko::Color,
     prelude::*,
-    reactive::{RwSignal, SignalGet, SignalUpdate, create_effect},
+    reactive::{create_effect, RwSignal, SignalGet, SignalUpdate},
     views::{
         button, dyn_stack, dyn_view, h_stack, label, labeled_checkbox, scroll, text, text_input,
         v_stack,
     },
-    window::{WindowId, close_window},
+    window::{close_window, WindowId},
+    IntoView,
 };
 
 #[derive(Clone)]
@@ -31,12 +31,15 @@ pub(super) struct MainWindow {
     new_custom_args: RwSignal<String>,
     new_domain_pattern: RwSignal<String>,
     new_domain_app_name: RwSignal<String>,
+    new_protocol_scheme: RwSignal<String>,
+    new_protocol_app_name: RwSignal<String>,
 }
 
 impl MainWindow {
     pub(super) fn new(app: LinkInterceptorApp, window_id: WindowId, initial_tab: MainTab) -> Self {
         let new_custom_app = CustomApp::default();
         let new_domain_rule = DomainRule::default();
+        let new_protocol_rule = ProtocolRule::default();
         Self {
             app,
             window_id,
@@ -50,6 +53,8 @@ impl MainWindow {
             new_custom_args: RwSignal::new(new_custom_app.args_template),
             new_domain_pattern: RwSignal::new(new_domain_rule.pattern),
             new_domain_app_name: RwSignal::new(new_domain_rule.app_name),
+            new_protocol_scheme: RwSignal::new(new_protocol_rule.scheme),
+            new_protocol_app_name: RwSignal::new(new_protocol_rule.app_name),
         }
     }
 
@@ -417,34 +422,93 @@ impl MainWindow {
 
     fn settings_view(&self) -> impl IntoView + 'static {
         let app = self.clone();
+        scroll(
+            v_stack((
+                text("窗口").style(|s| s.font_size(22.0)),
+                labeled_checkbox(
+                    move || app.app.state.config.get().bring_new_windows_to_front,
+                    || "打开新窗口时自动置顶",
+                )
+                .on_update({
+                    let app = self.clone();
+                    move |checked| {
+                        app.app.state.config.update(|config| {
+                            config.bring_new_windows_to_front = checked;
+                        });
+                        app.app.persist_config();
+                    }
+                }),
+                labeled_checkbox(
+                    move || app.app.state.config.get().close_intercept_window_after_open,
+                    || "拦截窗口默认在打开链接后自动关闭",
+                )
+                .on_update({
+                    let app = self.clone();
+                    move |checked| {
+                        app.app.state.config.update(|config| {
+                            config.close_intercept_window_after_open = checked;
+                        });
+                        app.app.persist_config();
+                    }
+                }),
+                self.opening_rules_view(),
+                h_stack((
+                    button("保存设置").action({
+                        let app = self.clone();
+                        move || app.app.persist_all()
+                    }),
+                    button("恢复默认设置").action({
+                        let app = self.clone();
+                        move || app.reset_config_confirmation.set(true)
+                    }),
+                ))
+                .style(|s| s.gap(8)),
+                dyn_view({
+                    let app = self.clone();
+                    move || {
+                        if app.reset_config_confirmation.get() {
+                            h_stack((
+                                text("此操作会将设置恢复为默认值，不会删除历史记录和收藏。"),
+                                button("取消").action({
+                                    let app = app.clone();
+                                    move || app.reset_config_confirmation.set(false)
+                                }),
+                                button("确认恢复").action({
+                                    let app = app.clone();
+                                    move || {
+                                        app.app.state.config.set(Config::default());
+                                        let default_app = CustomApp::default();
+                                        let default_rule = DomainRule::default();
+                                        let default_protocol_rule = ProtocolRule::default();
+                                        app.new_custom_name.set(default_app.name);
+                                        app.new_custom_executable.set(default_app.executable);
+                                        app.new_custom_args.set(default_app.args_template);
+                                        app.new_domain_pattern.set(default_rule.pattern);
+                                        app.new_domain_app_name.set(default_rule.app_name);
+                                        app.new_protocol_scheme.set(default_protocol_rule.scheme);
+                                        app.new_protocol_app_name
+                                            .set(default_protocol_rule.app_name);
+                                        app.app.persist_config();
+                                        app.reset_config_confirmation.set(false);
+                                        app.app.state.status.set("已恢复默认设置".to_owned());
+                                    }
+                                }),
+                            ))
+                            .style(|s| s.gap(8).padding(8))
+                            .into_any()
+                        } else {
+                            text("").into_any()
+                        }
+                    }
+                }),
+            ))
+            .style(|s| s.width_full().padding(14).gap(10).flex_col()),
+        )
+        .style(|s| s.size_full())
+    }
+
+    fn opening_rules_view(&self) -> impl IntoView + 'static {
         v_stack((
-            text("窗口").style(|s| s.font_size(22.0)),
-            labeled_checkbox(
-                move || app.app.state.config.get().bring_new_windows_to_front,
-                || "打开新窗口时自动置顶",
-            )
-            .on_update({
-                let app = self.clone();
-                move |checked| {
-                    app.app.state.config.update(|config| {
-                        config.bring_new_windows_to_front = checked;
-                    });
-                    app.app.persist_config();
-                }
-            }),
-            labeled_checkbox(
-                move || app.app.state.config.get().close_intercept_window_after_open,
-                || "拦截窗口默认在打开链接后自动关闭",
-            )
-            .on_update({
-                let app = self.clone();
-                move |checked| {
-                    app.app.state.config.update(|config| {
-                        config.close_intercept_window_after_open = checked;
-                    });
-                    app.app.persist_config();
-                }
-            }),
             text("自定义应用").style(|s| s.font_size(20.0)),
             self.custom_apps_view(),
             text("添加自定义应用").style(|s| s.font_size(16.0)),
@@ -482,9 +546,9 @@ impl MainWindow {
             self.domain_rules_view(),
             text("添加域名规则").style(|s| s.font_size(16.0)),
             h_stack((
-                text("匹配模式"),
+                text("根域名"),
                 text_input(self.new_domain_pattern).style(|s| s.width(180.0)),
-                text("应用名称"),
+                text("自定义应用"),
                 text_input(self.new_domain_app_name).style(|s| s.width(180.0)),
                 button("添加").action({
                     let app = self.clone();
@@ -507,53 +571,37 @@ impl MainWindow {
                 }),
             ))
             .style(|s| s.gap(6).items_center()),
+            text("协议规则").style(|s| s.font_size(20.0)),
+            self.protocol_rules_view(),
+            text("添加协议规则").style(|s| s.font_size(16.0)),
             h_stack((
-                button("保存设置").action({
+                text("协议"),
+                text_input(self.new_protocol_scheme).style(|s| s.width(120.0)),
+                text("自定义应用"),
+                text_input(self.new_protocol_app_name).style(|s| s.width(180.0)),
+                button("添加").action({
                     let app = self.clone();
-                    move || app.app.persist_all()
-                }),
-                button("恢复默认设置").action({
-                    let app = self.clone();
-                    move || app.reset_config_confirmation.set(true)
+                    move || {
+                        let scheme = app.new_protocol_scheme.get();
+                        if scheme.trim().is_empty() {
+                            return;
+                        }
+                        app.app.state.config.update(|config| {
+                            config.protocol_rules.push(ProtocolRule {
+                                scheme,
+                                app_name: app.new_protocol_app_name.get(),
+                            });
+                        });
+                        let default = ProtocolRule::default();
+                        app.new_protocol_scheme.set(default.scheme);
+                        app.new_protocol_app_name.set(default.app_name);
+                        app.app.persist_config();
+                    }
                 }),
             ))
-            .style(|s| s.gap(8)),
-            dyn_view({
-                let app = self.clone();
-                move || {
-                    if app.reset_config_confirmation.get() {
-                        h_stack((
-                            text("此操作会将设置恢复为默认值，不会删除历史记录和收藏。"),
-                            button("取消").action({
-                                let app = app.clone();
-                                move || app.reset_config_confirmation.set(false)
-                            }),
-                            button("确认恢复").action({
-                                let app = app.clone();
-                                move || {
-                                    app.app.state.config.set(Config::default());
-                                    let default_app = CustomApp::default();
-                                    let default_rule = DomainRule::default();
-                                    app.new_custom_name.set(default_app.name);
-                                    app.new_custom_executable.set(default_app.executable);
-                                    app.new_custom_args.set(default_app.args_template);
-                                    app.new_domain_pattern.set(default_rule.pattern);
-                                    app.new_domain_app_name.set(default_rule.app_name);
-                                    app.app.persist_config();
-                                    app.reset_config_confirmation.set(false);
-                                    app.app.state.status.set("已恢复默认设置".to_owned());
-                                }
-                            }),
-                        ))
-                        .style(|s| s.gap(8).padding(8))
-                        .into_any()
-                    } else {
-                        text("").into_any()
-                    }
-                }
-            }),
+            .style(|s| s.gap(6).items_center()),
         ))
-        .style(|s| s.size_full().padding(14).gap(10).flex_col())
+        .style(|s| s.gap(10).flex_col())
     }
 
     fn custom_apps_view(&self) -> impl IntoView + 'static {
@@ -635,9 +683,9 @@ impl MainWindow {
                     let pattern = RwSignal::new(rule.pattern);
                     let app_name = RwSignal::new(rule.app_name);
                     h_stack((
-                        text("匹配模式"),
+                        text("根域名"),
                         text_input(pattern).style(|s| s.width(180.0)),
-                        text("应用"),
+                        text("自定义应用"),
                         text_input(app_name).style(|s| s.width(180.0)),
                         button("保存").action({
                             let state = state.clone();
@@ -657,6 +705,61 @@ impl MainWindow {
                                 state.app.state.config.update(|config| {
                                     if index < config.domain_rules.len() {
                                         config.domain_rules.remove(index);
+                                    }
+                                });
+                                state.app.persist_config();
+                            }
+                        }),
+                    ))
+                    .style(|s| s.gap(6).items_center().padding(4))
+                }
+            },
+        )
+        .style(|s| s.flex_col().gap(4))
+    }
+
+    fn protocol_rules_view(&self) -> impl IntoView + 'static {
+        let app = self.clone();
+        dyn_stack(
+            move || {
+                app.app
+                    .state
+                    .config
+                    .get()
+                    .protocol_rules
+                    .into_iter()
+                    .enumerate()
+                    .collect::<Vec<_>>()
+            },
+            |(index, rule)| (*index, rule.scheme.clone(), rule.app_name.clone()),
+            {
+                let state = self.clone();
+                move |(index, rule): (usize, ProtocolRule)| {
+                    let scheme = RwSignal::new(rule.scheme);
+                    let app_name = RwSignal::new(rule.app_name);
+                    h_stack((
+                        text("协议"),
+                        text_input(scheme).style(|s| s.width(120.0)),
+                        text("自定义应用"),
+                        text_input(app_name).style(|s| s.width(180.0)),
+                        button("保存").action({
+                            let state = state.clone();
+                            move || {
+                                state.app.state.config.update(|config| {
+                                    if let Some(rule) = config.protocol_rules.get_mut(index) {
+                                        rule.scheme = scheme.get();
+                                        rule.app_name = app_name.get();
+                                    }
+                                });
+                                state.app.persist_config();
+                            }
+                        }),
+                        button("移除").action({
+                            let state = state.clone();
+                            move || {
+                                state.app.state.config.update(|config| {
+                                    if index < config.protocol_rules.len() {
+                                        config.protocol_rules.remove(index);
                                     }
                                 });
                                 state.app.persist_config();

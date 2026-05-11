@@ -74,20 +74,26 @@ pub fn build_candidates(config: &Config, url: &str) -> Vec<OpenCandidate> {
         }
     }
 
+    for rule in matching_protocol_rules(config, &parts.scheme) {
+        if let Some(app) = config
+            .custom_apps
+            .iter()
+            .find(|app| app.name.eq_ignore_ascii_case(&rule.app_name))
+        {
+            candidates.push(OpenCandidate::new(
+                app.name.clone(),
+                CandidateKind::ProtocolApp,
+                Some(app.executable.clone()),
+                app.args_template.clone(),
+                format!("协议规则 {}", rule.scheme),
+            ));
+        }
+    }
+
     if is_web {
         if let Some(domain) = parts.domain.as_deref() {
             candidates.extend(windows_integration::discover_app_uri_handlers(domain));
         }
-    }
-
-    for app in &config.custom_apps {
-        candidates.push(OpenCandidate::new(
-            app.name.clone(),
-            CandidateKind::CustomApp,
-            Some(app.executable.clone()),
-            app.args_template.clone(),
-            "自定义应用",
-        ));
     }
 
     candidates.push(windows_integration::shell_fallback_candidate());
@@ -100,12 +106,13 @@ fn sort_candidates(candidates: &mut [OpenCandidate], is_web: bool) {
         let rank = match candidate.kind {
             CandidateKind::DomainApp if is_web => 0,
             CandidateKind::ProtocolHandler if !is_web => 0,
-            CandidateKind::Browser if is_web => 1,
-            CandidateKind::Browser => 2,
-            CandidateKind::ProtocolHandler => 3,
-            CandidateKind::DomainApp => 4,
-            CandidateKind::CustomApp => 5,
-            CandidateKind::ShellFallback => 6,
+            CandidateKind::ProtocolApp if !is_web => 1,
+            CandidateKind::Browser if is_web => 2,
+            CandidateKind::Browser => 3,
+            CandidateKind::ProtocolHandler => 4,
+            CandidateKind::ProtocolApp => 5,
+            CandidateKind::DomainApp => 6,
+            CandidateKind::ShellFallback => 7,
         };
         (
             rank,
@@ -129,14 +136,43 @@ fn matching_domain_rules<'a>(
         .collect()
 }
 
-pub fn domain_matches(pattern: &str, domain: &str) -> bool {
-    let pattern = pattern.trim().to_ascii_lowercase();
-    let domain = domain.trim().to_ascii_lowercase();
-    if let Some(suffix) = pattern.strip_prefix("*.") {
-        domain == suffix || domain.ends_with(&format!(".{suffix}"))
-    } else {
-        domain == pattern
+fn matching_protocol_rules<'a>(
+    config: &'a Config,
+    scheme: &str,
+) -> Vec<&'a crate::models::ProtocolRule> {
+    let scheme = scheme.trim().to_ascii_lowercase();
+    if scheme.is_empty() {
+        return Vec::new();
     }
+    config
+        .protocol_rules
+        .iter()
+        .filter(|rule| rule.scheme.trim().eq_ignore_ascii_case(&scheme))
+        .collect()
+}
+
+pub fn domain_matches(pattern: &str, domain: &str) -> bool {
+    root_domain(pattern).is_some_and(|pattern| {
+        root_domain(domain).is_some_and(|domain| pattern.eq_ignore_ascii_case(&domain))
+    })
+}
+
+pub fn root_domain(domain: &str) -> Option<String> {
+    let domain = domain
+        .trim()
+        .trim_end_matches('.')
+        .trim_start_matches("*.")
+        .to_ascii_lowercase();
+    let mut labels = domain
+        .split('.')
+        .filter(|label| !label.is_empty())
+        .collect::<Vec<_>>();
+    if labels.len() < 2 {
+        return None;
+    }
+    let last = labels.pop()?;
+    let second_last = labels.pop()?;
+    Some(format!("{second_last}.{last}"))
 }
 
 fn deduplicate(candidates: Vec<OpenCandidate>) -> Vec<OpenCandidate> {
@@ -157,7 +193,7 @@ fn deduplicate(candidates: Vec<OpenCandidate>) -> Vec<OpenCandidate> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{CustomApp, DomainRule};
+    use crate::models::{CustomApp, DomainRule, ProtocolRule};
 
     #[test]
     fn parses_web_url() {
@@ -174,8 +210,9 @@ mod tests {
     }
 
     #[test]
-    fn wildcard_domain_matches() {
-        assert!(domain_matches("*.example.com", "a.example.com"));
+    fn root_domain_matches_ignore_subdomains() {
+        assert!(domain_matches("example.com", "a.example.com"));
+        assert!(domain_matches("api.example.com", "www.example.com"));
         assert!(domain_matches("*.example.com", "example.com"));
         assert!(!domain_matches("*.example.com", "badexample.com"));
     }
@@ -200,5 +237,43 @@ mod tests {
             .find(|candidate| candidate.kind == CandidateKind::DomainApp)
             .unwrap();
         assert_eq!(app.name, "Example App");
+    }
+
+    #[test]
+    fn matching_protocol_rule_adds_protocol_app_candidate() {
+        let config = Config {
+            custom_apps: vec![CustomApp {
+                name: "Mail App".to_owned(),
+                executable: "mail.exe".to_owned(),
+                args_template: "{url}".to_owned(),
+            }],
+            protocol_rules: vec![ProtocolRule {
+                scheme: "mailto".to_owned(),
+                app_name: "Mail App".to_owned(),
+            }],
+            ..Default::default()
+        };
+        let candidates = build_candidates(&config, "mailto:test@example.com");
+        let app = candidates
+            .iter()
+            .find(|candidate| candidate.kind == CandidateKind::ProtocolApp)
+            .unwrap();
+        assert_eq!(app.name, "Mail App");
+    }
+
+    #[test]
+    fn custom_apps_are_not_added_without_matching_rule() {
+        let config = Config {
+            custom_apps: vec![CustomApp {
+                name: "Example App".to_owned(),
+                executable: "example.exe".to_owned(),
+                args_template: "{url}".to_owned(),
+            }],
+            ..Default::default()
+        };
+        let candidates = build_candidates(&config, "https://example.com");
+        assert!(!candidates
+            .iter()
+            .any(|candidate| candidate.name == "Example App"));
     }
 }

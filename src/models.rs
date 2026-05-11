@@ -74,13 +74,32 @@ impl Default for DomainRule {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProtocolRule {
+    pub scheme: String,
+    pub app_name: String,
+}
+
+impl Default for ProtocolRule {
+    fn default() -> Self {
+        Self {
+            scheme: "mailto".to_owned(),
+            app_name: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Config {
     #[serde(default = "default_bring_new_windows_to_front")]
     pub bring_new_windows_to_front: bool,
     #[serde(default = "default_close_intercept_window_after_open")]
     pub close_intercept_window_after_open: bool,
+    #[serde(default)]
     pub custom_apps: Vec<CustomApp>,
+    #[serde(default)]
     pub domain_rules: Vec<DomainRule>,
+    #[serde(default)]
+    pub protocol_rules: Vec<ProtocolRule>,
 }
 
 impl Default for Config {
@@ -90,6 +109,7 @@ impl Default for Config {
             close_intercept_window_after_open: default_close_intercept_window_after_open(),
             custom_apps: Vec::new(),
             domain_rules: Vec::new(),
+            protocol_rules: Vec::new(),
         }
     }
 }
@@ -107,7 +127,7 @@ pub enum CandidateKind {
     Browser,
     ProtocolHandler,
     DomainApp,
-    CustomApp,
+    ProtocolApp,
     ShellFallback,
 }
 

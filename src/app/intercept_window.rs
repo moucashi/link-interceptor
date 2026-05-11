@@ -6,7 +6,6 @@ use crate::{
     ui_style::interactive_cursor_style,
 };
 use floem::{
-    Clipboard, IntoView,
     keyboard::{Key, NamedKey},
     prelude::*,
     reactive::{RwSignal, SignalGet, SignalUpdate},
@@ -14,7 +13,8 @@ use floem::{
     views::{
         button, dyn_stack, h_stack, label, labeled_checkbox, scroll, text, text_input, v_stack,
     },
-    window::{WindowId, close_window},
+    window::{close_window, WindowId},
+    Clipboard, IntoView,
 };
 
 #[derive(Clone)]
@@ -195,9 +195,7 @@ fn candidate_button_label(candidate: &OpenCandidate) -> String {
 
 fn candidate_button_prefix(candidate: &OpenCandidate, kind: &str) -> String {
     match candidate.kind.clone() {
-        CandidateKind::Browser | CandidateKind::CustomApp | CandidateKind::ShellFallback => {
-            kind.to_owned()
-        }
+        CandidateKind::Browser | CandidateKind::ShellFallback => kind.to_owned(),
         CandidateKind::ProtocolHandler => candidate
             .reason
             .trim()
@@ -205,6 +203,14 @@ fn candidate_button_prefix(candidate: &OpenCandidate, kind: &str) -> String {
             .and_then(|reason| reason.strip_suffix(" 协议处理程序"))
             .map(|scheme| format!("{kind} · {scheme}"))
             .unwrap_or_else(|| kind.to_owned()),
+        CandidateKind::ProtocolApp => {
+            let reason = candidate.reason.trim();
+            if let Some(scheme) = reason.strip_prefix("协议规则 ") {
+                format!("{kind} · {scheme}")
+            } else {
+                kind.to_owned()
+            }
+        }
         CandidateKind::DomainApp => {
             let reason = candidate.reason.trim();
             if let Some(pattern) = reason.strip_prefix("域名规则 ") {
@@ -223,7 +229,7 @@ fn candidate_kind_label(kind: CandidateKind) -> &'static str {
         CandidateKind::Browser => "浏览器",
         CandidateKind::ProtocolHandler => "协议处理程序",
         CandidateKind::DomainApp => "域名应用",
-        CandidateKind::CustomApp => "自定义应用",
+        CandidateKind::ProtocolApp => "协议应用",
         CandidateKind::ShellFallback => "Windows 默认处理程序",
     }
 }
